@@ -2,17 +2,20 @@ using System.IO;
 using System.Linq;
 using BarOwner.Bar;
 using BarOwner.Customers;
+using BarOwner.Day;
 using BarOwner.Economy;
 using BarOwner.Interaction;
 using BarOwner.Networking;
 using BarOwner.Player;
 using BarOwner.UI;
+using Unity.AI.Navigation;
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using Unity.Netcode.Transports.UTP;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -34,13 +37,14 @@ namespace BarOwner.EditorTools
         private const string ScenePath = SceneDir + "/Bar_Greybox.unity";
         private const string PlayerPrefabPath = PrefabDir + "/Player.prefab";
         private const string GlassPrefabPath = PrefabDir + "/PintGlass.prefab";
+        private const string CustomerPrefabPath = PrefabDir + "/Customer.prefab";
 
         [MenuItem("BarOwner/Build Greybox Bar Scene", priority = 0)]
         public static void Build()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             if (File.Exists(ScenePath) && !EditorUtility.DisplayDialog("Rebuild greybox bar?",
-                    $"This overwrites {ScenePath}, the Player and PintGlass prefabs and the greybox materials. Manual edits to them will be lost.",
+                    $"This overwrites {ScenePath}, the Player, PintGlass and Customer prefabs and the greybox materials. Manual edits to them will be lost.",
                     "Rebuild", "Cancel"))
                 return;
 
@@ -51,8 +55,9 @@ namespace BarOwner.EditorTools
             var mats = new Palette();
             GameObject playerPrefab = BuildPlayerPrefab(mats);
             GameObject glassPrefab = BuildGlassPrefab(mats);
+            GameObject customerPrefab = BuildCustomerPrefab(mats);
             NetworkPrefabsList prefabList = GetOrCreatePrefabList();
-            foreach (var prefab in new[] { playerPrefab, glassPrefab })
+            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab })
             {
                 if (prefabList.Contains(prefab)) continue;
                 prefabList.Add(new NetworkPrefab { Prefab = prefab });
@@ -69,7 +74,9 @@ namespace BarOwner.EditorTools
             BuildTaps(mats);
             BuildGlassRack(mats, glassPrefab);
             BuildTill(mats);
-            BuildTestCustomer(mats);
+            BuildDayClock();
+            BuildOpenSign(mats);
+            BuildCustomerDirector(customerPrefab, glassPrefab);
             BuildLightSwitch(mats, barLights);
             BuildSpawnPoints();
             GameObject lobbyCamera = BuildLobbyCamera();
@@ -151,6 +158,11 @@ namespace BarOwner.EditorTools
         private static Light[] BuildRoom(Palette m)
         {
             var room = new GameObject("Room").transform;
+
+            // Customers path on a NavMesh built at runtime (server only) from the room's colliders.
+            var surface = room.gameObject.AddComponent<NavMeshSurface>();
+            surface.collectObjects = CollectObjects.Children;
+            surface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
 
             // Shell: 12m x 10m, 3.2m high. Origin = floor centre. Bar along the back (+Z) wall.
             Block("Floor", room, new Vector3(0f, -0.05f, 0f), new Vector3(12f, 0.1f, 10f), m.Floor);
@@ -339,41 +351,176 @@ namespace BarOwner.EditorTools
             till.AddComponent<BarTill>();
         }
 
-        private static void BuildTestCustomer(Palette m)
+        // ------------------------------------------------------------------ M3: customers + day
+
+        private static GameObject BuildCustomerPrefab(Palette m)
         {
-            // Stands on the public side of the bar, facing it (+Z).
-            var customer = new GameObject("TestCustomer");
-            customer.transform.SetPositionAndRotation(new Vector3(-2.4f, 0f, 1.85f), Quaternion.identity);
+            var root = new GameObject("Customer");
 
-            Primitive(PrimitiveType.Capsule, "Body", customer.transform, new Vector3(0f, 0.85f, 0f),
-                new Vector3(0.6f, 0.85f, 0.6f), m.Customer, keepCollider: true);
-            Primitive(PrimitiveType.Sphere, "Head", customer.transform, new Vector3(0f, 1.78f, 0f),
-                new Vector3(0.32f, 0.32f, 0.32f), m.Skin, keepCollider: true);
-            Primitive(PrimitiveType.Cube, "Eyes", customer.transform, new Vector3(0f, 1.82f, 0.15f),
+            var capsule = root.AddComponent<CapsuleCollider>();
+            capsule.center = new Vector3(0f, 0.85f, 0f);
+            capsule.radius = 0.3f;
+            capsule.height = 1.7f;
+            var rb = root.AddComponent<Rigidbody>();
+            rb.isKinematic = true; // moved by the NavMeshAgent; still shoves loose glasses about
+
+            var agent = root.AddComponent<NavMeshAgent>();
+            agent.radius = 0.3f;
+            agent.height = 1.8f;
+            agent.speed = 1.5f;
+            agent.angularSpeed = 360f;
+            agent.acceleration = 8f;
+            agent.stoppingDistance = 0.1f;
+            agent.enabled = false; // the server enables it
+
+            root.AddComponent<NetworkObject>();
+            var nt = root.AddComponent<NetworkTransform>();
+            ConfigureNetworkTransform(nt, syncPitchRoll: false);
+            nt.AuthorityMode = NetworkTransform.AuthorityModes.Server;
+
+            var body = Primitive(PrimitiveType.Capsule, "Body", root.transform, new Vector3(0f, 0.85f, 0f),
+                new Vector3(0.6f, 0.85f, 0.6f), m.Customer, keepCollider: false);
+            Primitive(PrimitiveType.Sphere, "Head", root.transform, new Vector3(0f, 1.78f, 0f),
+                new Vector3(0.32f, 0.32f, 0.32f), m.Skin, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Eyes", root.transform, new Vector3(0f, 1.82f, 0.15f),
                 new Vector3(0.18f, 0.04f, 0.04f), m.Dark, keepCollider: false);
+            var pint = Primitive(PrimitiveType.Cylinder, "HeldPint", root.transform, new Vector3(0.33f, 1.1f, 0.18f),
+                new Vector3(0.085f, 0.075f, 0.085f), m.Liquid, keepCollider: false);
+            pint.SetActive(false);
 
-            // Speech bubble: world-space canvas that always faces the camera.
-            var canvasGo = new GameObject("SpeechBubble", typeof(RectTransform), typeof(Canvas), typeof(Billboard));
-            var canvasRt = (RectTransform)canvasGo.transform;
-            canvasRt.SetParent(customer.transform, false);
-            canvasRt.localPosition = new Vector3(0f, 2.3f, 0f);
-            canvasRt.sizeDelta = new Vector2(520f, 90f);
-            canvasRt.localScale = Vector3.one * 0.004f;
-            canvasGo.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-            var bg = UiElement<Image>("Background", canvasRt, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(520f, 90f));
+            // Speech bubble.
+            var speechCanvas = WorldCanvas("SpeechBubble", root.transform, new Vector3(0f, 2.35f, 0f), new Vector2(560f, 90f), 0.004f);
+            var bg = UiElement<Image>("Background", speechCanvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(560f, 90f));
             bg.color = new Color(0f, 0f, 0f, 0.6f);
-            var text = UiElement<Text>("Text", canvasRt, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500f, 80f));
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var text = UiElement<Text>("Text", speechCanvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(540f, 80f));
+            text.font = font;
             text.fontSize = 34;
             text.alignment = TextAnchor.MiddleCenter;
             text.color = Color.white;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
-            text.text = "...";
+            speechCanvas.gameObject.SetActive(false);
 
-            customer.AddComponent<NetworkObject>();
-            var tc = customer.AddComponent<TestCustomer>();
-            SetRef(tc, "speech", text);
+            // Patience bar.
+            var patienceCanvas = WorldCanvas("PatienceBar", root.transform, new Vector3(0f, 2.08f, 0f), new Vector2(200f, 18f), 0.004f);
+            var barBg = UiElement<Image>("Background", patienceCanvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(200f, 18f));
+            barBg.color = new Color(0f, 0f, 0f, 0.7f);
+            var fill = UiElement<Image>("Fill", patienceCanvas, new Vector2(0f, 0.5f), new Vector2(2f, 0f), new Vector2(196f, 14f));
+            fill.rectTransform.pivot = new Vector2(0f, 0.5f);
+            fill.color = Color.green;
+            patienceCanvas.gameObject.SetActive(false);
+
+            var customer = root.AddComponent<Customer>();
+            SetRef(customer, "bodyRenderer", body.GetComponent<Renderer>());
+            SetRef(customer, "speechRoot", speechCanvas.gameObject);
+            SetRef(customer, "speech", text);
+            SetRef(customer, "patienceRoot", patienceCanvas.gameObject);
+            SetRef(customer, "patienceFill", fill.rectTransform);
+            SetRef(customer, "patienceImage", fill);
+            SetRef(customer, "heldPint", pint);
+            SetRef(customer, "heldPintRenderer", pint.GetComponent<Renderer>());
+
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, CustomerPrefabPath);
+            Object.DestroyImmediate(root);
+            return prefab;
+        }
+
+        private static RectTransform WorldCanvas(string name, Transform parent, Vector3 localPos, Vector2 size, float scale)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Canvas), typeof(Billboard));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(parent, false);
+            rt.localPosition = localPos;
+            rt.sizeDelta = size;
+            rt.localScale = Vector3.one * scale;
+            go.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            return rt;
+        }
+
+        private static void BuildDayClock()
+        {
+            var go = new GameObject("DayClock");
+            go.AddComponent<NetworkObject>();
+            go.AddComponent<DayClock>();
+        }
+
+        private static void BuildOpenSign(Palette m)
+        {
+            var board = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            board.name = "OpenSign";
+            board.transform.position = new Vector3(2.9f, 1.6f, -4.97f);
+            board.transform.localScale = new Vector3(0.55f, 0.26f, 0.04f);
+            board.GetComponent<Renderer>().sharedMaterial = m.Ceiling;
+
+            // Text faces into the room (-Z forward so it reads from inside).
+            var canvasGo = new GameObject("Label", typeof(RectTransform), typeof(Canvas));
+            var rt = (RectTransform)canvasGo.transform;
+            rt.position = new Vector3(2.9f, 1.6f, -4.945f);
+            rt.rotation = Quaternion.Euler(0f, 180f, 0f);
+            rt.sizeDelta = new Vector2(260f, 120f);
+            rt.localScale = Vector3.one * 0.002f;
+            rt.SetParent(board.transform, true);
+            canvasGo.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            var label = UiElement<Text>("Text", rt, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(260f, 120f));
+            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            label.fontSize = 70;
+            label.fontStyle = FontStyle.Bold;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.color = Color.white;
+            label.text = "CLOSED";
+
+            var sign = board.AddComponent<OpenSign>();
+            SetRef(sign, "label", label);
+            SetRef(sign, "board", board.GetComponent<Renderer>());
+        }
+
+        private static void BuildCustomerDirector(GameObject customerPrefab, GameObject glassPrefab)
+        {
+            var go = new GameObject("CustomerDirector");
+            go.AddComponent<NetworkObject>();
+            var director = go.AddComponent<CustomerDirector>();
+
+            Transform Marker(string name, Vector3 pos, Quaternion rot)
+            {
+                var t = new GameObject(name).transform;
+                t.SetParent(go.transform, false);
+                t.SetPositionAndRotation(pos, rot);
+                return t;
+            }
+
+            var entrance = Marker("Entrance", new Vector3(4.7f, 0f, -7.6f), Quaternion.identity);
+            var exit = Marker("Exit", new Vector3(4.7f, 0f, -7.9f), Quaternion.Euler(0f, 180f, 0f));
+            var standing = Marker("StandingArea", new Vector3(5.1f, 0f, -1.2f), Quaternion.Euler(0f, -90f, 0f));
+
+            float[] barX = { -3.3f, -2.2f, -1.0f, 0.3f };
+            var barSpots = barX.Select((x, i) => Marker($"BarSpot_{i}", new Vector3(x, 0f, 1.9f), Quaternion.identity)).ToArray();
+
+            Vector3[] queue = { new(1.2f, 0f, 1.1f), new(1.5f, 0f, 0.3f), new(2.0f, 0f, -0.4f), new(2.6f, 0f, -1.0f), new(3.2f, 0f, -1.6f) };
+            var queueSpots = queue.Select((p, i) => Marker($"Queue_{i}", p, Quaternion.identity)).ToArray();
+
+            // Four seats around each table, facing it.
+            Vector3[] tables = { new(-3.5f, 0f, -2f), new(0f, 0f, -2.5f), new(-1.5f, 0f, 0.3f) };
+            Vector3[] sides = { Vector3.left, Vector3.right, Vector3.forward, Vector3.back };
+            var seatList = new System.Collections.Generic.List<Transform>();
+            foreach (var table in tables)
+                foreach (var side in sides)
+                {
+                    Vector3 pos = table + side * 1.05f;
+                    seatList.Add(Marker($"Seat_{seatList.Count}", pos, Quaternion.LookRotation(-side)));
+                }
+
+            var so = new SerializedObject(director);
+            so.FindProperty("customerPrefab").objectReferenceValue = customerPrefab.GetComponent<NetworkObject>();
+            so.FindProperty("glassPrefab").objectReferenceValue = glassPrefab.GetComponent<NetworkObject>();
+            so.FindProperty("navMeshSurface").objectReferenceValue = Object.FindFirstObjectByType<NavMeshSurface>();
+            so.FindProperty("entrance").objectReferenceValue = entrance;
+            so.FindProperty("exit").objectReferenceValue = exit;
+            so.FindProperty("standingArea").objectReferenceValue = standing;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            SetRefs(director, "barSpots", barSpots.Cast<Object>().ToArray());
+            SetRefs(director, "queueSpots", queueSpots.Cast<Object>().ToArray());
+            SetRefs(director, "seats", seatList.Cast<Object>().ToArray());
         }
 
         private static void BuildLightSwitch(Palette m, Light[] lights)
@@ -480,7 +627,25 @@ namespace BarOwner.EditorTools
             moneyGain.color = new Color(1f, 0.9f, 0.4f);
             moneyGain.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.8f);
 
+            var clockText = UiElement<Text>("Clock", canvasGo.transform, new Vector2(0.5f, 1f), new Vector2(0f, -22f), new Vector2(1200f, 44f));
+            clockText.rectTransform.pivot = new Vector2(0.5f, 1f);
+            clockText.font = font;
+            clockText.fontSize = 28;
+            clockText.alignment = TextAnchor.UpperCenter;
+            clockText.color = Color.white;
+            clockText.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.8f);
+
+            var announcement = UiElement<Text>("Announcement", canvasGo.transform, new Vector2(0.5f, 0.5f), new Vector2(0f, 230f), new Vector2(1600f, 160f));
+            announcement.font = font;
+            announcement.fontSize = 46;
+            announcement.fontStyle = FontStyle.Bold;
+            announcement.alignment = TextAnchor.MiddleCenter;
+            announcement.color = new Color(1f, 0.92f, 0.6f);
+            announcement.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.9f);
+
             var hud = canvasGo.AddComponent<PlayerHUD>();
+            SetRef(hud, "clockText", clockText);
+            SetRef(hud, "announcementText", announcement);
             SetRef(hud, "promptText", prompt);
             SetRef(hud, "crosshair", crosshair);
             SetRef(hud, "moneyText", money);
