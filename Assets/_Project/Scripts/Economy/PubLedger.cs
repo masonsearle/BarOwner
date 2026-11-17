@@ -29,7 +29,7 @@ namespace BarOwner.Economy
         private readonly NetworkVariable<float> _reputation = new(1f);
 
         // Today's numbers (server only; summarised in the report).
-        private int _sales, _tips, _deposits, _kegCosts, _openingBalance;
+        private int _sales, _tips, _deposits, _kegCosts, _wages, _skimmed, _openingBalance;
         private int _served, _walkouts, _pricedOut, _shortPints;
 
         public float Reputation => _reputation.Value;
@@ -92,7 +92,7 @@ namespace BarOwner.Economy
         public void ServerBeginDay()
         {
             if (!IsServer) return;
-            _sales = _tips = _deposits = _kegCosts = 0;
+            _sales = _tips = _deposits = _kegCosts = _wages = _skimmed = 0;
             _served = _walkouts = _pricedOut = _shortPints = 0;
             _openingBalance = BarTill.Instance != null ? BarTill.Instance.Pence : 0;
         }
@@ -109,6 +109,8 @@ namespace BarOwner.Economy
         public void ServerRecordPricedOut() => _pricedOut++;
         public void ServerRecordKegPurchase(int pence) => _kegCosts += pence;
         public void ServerRecordDeposit(int pence) => _deposits += pence;
+        public void ServerRecordWages(int pence) => _wages += pence;
+        public void ServerRecordSkimmed(int pence) => _skimmed += pence;
 
         /// <summary>SERVER: close the books, move reputation, and show everyone the report.</summary>
         public void ServerEndDay(int day)
@@ -136,7 +138,10 @@ namespace BarOwner.Economy
             sb.AppendLine($"Tips         {Money.Format(_tips)}");
             if (_deposits > 0) sb.AppendLine($"Keg deposits {Money.Format(_deposits)}");
             sb.AppendLine($"Kegs bought  -{Money.Format(_kegCosts)}");
-            sb.AppendLine($"<b>Profit       {Money.Format(income - _kegCosts)}</b>");
+            if (_wages > 0) sb.AppendLine($"Wages        -{Money.Format(_wages)}");
+            // Staff don't confess; the till just comes up short.
+            if (_skimmed > 0) sb.AppendLine($"<color=#ff8866>Till short   -{Money.Format(_skimmed)}  (someone's light-fingered...)</color>");
+            sb.AppendLine($"<b>Profit       {Money.Format(income - _kegCosts - _wages - _skimmed)}</b>");
             sb.AppendLine();
             sb.AppendLine($"Till         {Money.Format(_openingBalance)} -> {Money.Format(closing)}");
             sb.AppendLine($"Reputation   {before:0.0} -> {_reputation.Value:0.0} / 5  ({change:+0.0;-0.0;+0.0})");

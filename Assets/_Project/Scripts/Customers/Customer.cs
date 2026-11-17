@@ -3,6 +3,7 @@ using BarOwner.Day;
 using BarOwner.Economy;
 using BarOwner.Interaction;
 using BarOwner.Player;
+using BarOwner.Staff;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -74,7 +75,11 @@ namespace BarOwner.Customers
         private float _reactionUntil;
         private MaterialPropertyBlock _props;
 
+        /// <summary>Every spawned customer (staff look for people waiting).</summary>
+        public static readonly System.Collections.Generic.List<Customer> All = new();
+
         public CustomerState State => _state.Value;
+        public DrinkType WantsDrink => _wants.Value;
 
         private void Awake()
         {
@@ -85,6 +90,7 @@ namespace BarOwner.Customers
 
         public override void OnNetworkSpawn()
         {
+            All.Add(this);
             _state.OnValueChanged += OnStateChanged;
             _wants.OnValueChanged += OnWantsChanged;
             _holding.OnValueChanged += OnHoldingChanged;
@@ -102,6 +108,7 @@ namespace BarOwner.Customers
 
         public override void OnNetworkDespawn()
         {
+            All.Remove(this);
             _state.OnValueChanged -= OnStateChanged;
             _wants.OnValueChanged -= OnWantsChanged;
             _holding.OnValueChanged -= OnHoldingChanged;
@@ -298,17 +305,34 @@ namespace BarOwner.Customers
                 return;
             }
 
+            float fill = glass.Fill;
+            glassObject.Despawn(); // it's theirs now; the empty comes back later
+            ServerCompleteServe(wanted, fill, null);
+        }
+
+        /// <summary>SERVER: a member of staff hands over a pint they poured.</summary>
+        public void ServerServeByStaff(DrinkType drink, float fill, StaffWorker staff)
+        {
+            if (!IsServer || _state.Value != CustomerState.Ordering || drink != _wants.Value) return;
+            if (fill < 0.6f) { ReactRpc("That's barely half a pint!"); return; }
+            ServerCompleteServe(drink, fill, staff);
+        }
+
+        /// <summary>SERVER: take payment, then go and sit down with the drink.</summary>
+        private void ServerCompleteServe(DrinkType wanted, float fill, StaffWorker staff)
+        {
             var ledger = PubLedger.Instance;
             int price = ledger != null ? ledger.PricePence(wanted) : Drinks.PricePence(wanted);
             bool feelsCheap = ledger == null || ledger.PriceRatio(wanted) <= EffectiveTolerance() * 0.85f;
             int paid, tip = 0;
-            bool shortPint = glass.Fill < 0.95f;
+            bool shortPint = fill < 0.95f;
             string line;
             if (!shortPint)
             {
                 paid = price;
                 // Quick, full, fairly-priced pints earn tips: the happier they were, the likelier.
-                if (feelsCheap && Random.value < 0.15f + 0.35f * _patience.Value)
+                float charm = staff != null ? staff.CharmTipBonus : 0f;
+                if (feelsCheap && Random.value < 0.15f + 0.35f * _patience.Value + charm)
                 {
                     tip = Mathf.Max(10, Mathf.RoundToInt(price * 0.1f / 10f) * 10);
                     line = "Lovely pint! Keep the change.";
@@ -317,13 +341,14 @@ namespace BarOwner.Customers
             }
             else
             {
-                paid = Mathf.RoundToInt(price * glass.Fill / 10f) * 10;
+                paid = Mathf.RoundToInt(price * fill / 10f) * 10;
                 line = "Bit short, that...";
             }
 
-            BarTill.Instance?.ServerDeposit(paid + tip, transform.position + Vector3.up * 2f);
+            int skimmed = staff != null ? staff.ServerMaybeSkim(paid + tip) : 0;
+            BarTill.Instance?.ServerDeposit(paid + tip - skimmed, transform.position + Vector3.up * 2f);
             ledger?.ServerRecordSale(paid, tip, shortPint);
-            glassObject.Despawn(); // it's theirs now; the empty comes back later
+            if (skimmed > 0) ledger?.ServerRecordSkimmed(skimmed);
             ReactRpc($"{line}  (+{Money.Format(paid + tip)})");
 
             _wants.Value = DrinkType.None;

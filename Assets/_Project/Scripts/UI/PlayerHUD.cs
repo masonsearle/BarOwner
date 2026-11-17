@@ -92,7 +92,8 @@ namespace BarOwner.UI
                     PubPhase.LastOrders => "LAST ORDERS",
                     _ => "CLOSING",
                 };
-                text = clock.Phase == PubPhase.Closed ? $"Day {clock.Day}  ·  {phase}" : $"Day {clock.Day}  ·  {clock.ClockText}  ·  {phase}";
+                string day = $"{Staff.StaffNames.Weekdays[Staff.StaffNames.WeekdayOf(clock.Day)]} · Day {clock.Day}";
+                text = clock.Phase == PubPhase.Closed ? $"{day}  ·  {phase}" : $"{day}  ·  {clock.ClockText}  ·  {phase}";
                 if (PubLedger.Instance != null && PubLedger.Instance.IsSpawned)
                     text += $"  ·  Reputation {PubLedger.Instance.Reputation:0.0}/5";
             }

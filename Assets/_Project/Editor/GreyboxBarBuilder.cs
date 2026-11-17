@@ -8,6 +8,7 @@ using BarOwner.Interaction;
 using BarOwner.Networking;
 using BarOwner.Player;
 using BarOwner.Saving;
+using BarOwner.Staff;
 using BarOwner.UI;
 using Unity.AI.Navigation;
 using Unity.Netcode;
@@ -40,13 +41,14 @@ namespace BarOwner.EditorTools
         private const string GlassPrefabPath = PrefabDir + "/PintGlass.prefab";
         private const string CustomerPrefabPath = PrefabDir + "/Customer.prefab";
         private const string KegPrefabPath = PrefabDir + "/Keg.prefab";
+        private const string StaffPrefabPath = PrefabDir + "/StaffWorker.prefab";
 
         [MenuItem("BarOwner/Build Greybox Bar Scene", priority = 0)]
         public static void Build()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             if (File.Exists(ScenePath) && !EditorUtility.DisplayDialog("Rebuild greybox bar?",
-                    $"This overwrites {ScenePath}, the Player, PintGlass, Customer and Keg prefabs and the greybox materials. Manual edits to them will be lost.",
+                    $"This overwrites {ScenePath}, the Player, PintGlass, Customer, Keg and StaffWorker prefabs and the greybox materials. Manual edits to them will be lost.",
                     "Rebuild", "Cancel"))
                 return;
 
@@ -59,8 +61,9 @@ namespace BarOwner.EditorTools
             GameObject glassPrefab = BuildGlassPrefab(mats);
             GameObject customerPrefab = BuildCustomerPrefab(mats);
             GameObject kegPrefab = BuildKegPrefab(mats);
+            GameObject staffPrefab = BuildStaffPrefab(mats);
             NetworkPrefabsList prefabList = GetOrCreatePrefabList();
-            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab, kegPrefab })
+            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab, kegPrefab, staffPrefab })
             {
                 if (prefabList.Contains(prefab)) continue;
                 prefabList.Add(new NetworkPrefab { Prefab = prefab });
@@ -83,6 +86,8 @@ namespace BarOwner.EditorTools
             BuildPriceBoard(mats);
             BuildOpenSign(mats);
             BuildCustomerDirector(customerPrefab, glassPrefab);
+            BuildStaffManager(staffPrefab);
+            BuildStaffBoard(mats);
             BuildLightSwitch(mats, barLights);
             BuildSpawnPoints();
             GameObject lobbyCamera = BuildLobbyCamera();
@@ -363,6 +368,184 @@ namespace BarOwner.EditorTools
             Primitive(PrimitiveType.Cube, "Screen", till.transform, new Vector3(0f, 0.75f, 0.2f), new Vector3(0.6f, 0.5f, 0.1f), m.Hazard, keepCollider: false);
             till.AddComponent<NetworkObject>();
             till.AddComponent<BarTill>();
+        }
+
+        // ------------------------------------------------------------------ M6: staff + rota
+
+        private static GameObject BuildStaffPrefab(Palette m)
+        {
+            var root = new GameObject("StaffWorker");
+            var capsule = root.AddComponent<CapsuleCollider>();
+            capsule.center = new Vector3(0f, 0.85f, 0f);
+            capsule.radius = 0.28f;
+            capsule.height = 1.7f;
+            root.AddComponent<Rigidbody>().isKinematic = true;
+
+            var agent = root.AddComponent<NavMeshAgent>();
+            agent.radius = 0.25f;
+            agent.height = 1.8f;
+            agent.speed = 2f;
+            agent.angularSpeed = 480f;
+            agent.acceleration = 10f;
+            agent.stoppingDistance = 0.05f;
+            agent.enabled = false;
+
+            root.AddComponent<NetworkObject>();
+            var nt = root.AddComponent<NetworkTransform>();
+            ConfigureNetworkTransform(nt, syncPitchRoll: false);
+            nt.AuthorityMode = NetworkTransform.AuthorityModes.Server;
+
+            Primitive(PrimitiveType.Capsule, "Body", root.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.56f, 0.85f, 0.56f), m.Dark, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Apron", root.transform, new Vector3(0f, 0.75f, 0.25f), new Vector3(0.42f, 0.7f, 0.06f), m.Ceiling, keepCollider: false);
+            Primitive(PrimitiveType.Sphere, "Head", root.transform, new Vector3(0f, 1.78f, 0f), new Vector3(0.32f, 0.32f, 0.32f), m.Skin, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Eyes", root.transform, new Vector3(0f, 1.82f, 0.15f), new Vector3(0.18f, 0.04f, 0.04f), m.Dark, keepCollider: false);
+            var glass = Primitive(PrimitiveType.Cylinder, "CarriedGlass", root.transform, new Vector3(0.32f, 1.05f, 0.2f),
+                new Vector3(0.085f, 0.075f, 0.085f), m.Glass, keepCollider: false);
+            glass.SetActive(false);
+
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var nameCanvas = WorldCanvas("NameTag", root.transform, new Vector3(0f, 2.12f, 0f), new Vector2(400f, 50f), 0.004f);
+            var nameTag = UiElement<Text>("Text", nameCanvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(400f, 50f));
+            nameTag.font = font;
+            nameTag.fontSize = 32;
+            nameTag.fontStyle = FontStyle.Bold;
+            nameTag.alignment = TextAnchor.MiddleCenter;
+            nameTag.color = new Color(0.6f, 0.9f, 1f);
+            nameTag.gameObject.AddComponent<Outline>().effectColor = Color.black;
+
+            var statusCanvas = WorldCanvas("Status", root.transform, new Vector3(0f, 2.32f, 0f), new Vector2(600f, 50f), 0.0035f);
+            var status = UiElement<Text>("Text", statusCanvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(600f, 50f));
+            status.font = font;
+            status.fontSize = 30;
+            status.alignment = TextAnchor.MiddleCenter;
+            status.color = Color.white;
+            status.horizontalOverflow = HorizontalWrapMode.Overflow;
+            status.gameObject.AddComponent<Outline>().effectColor = Color.black;
+
+            var worker = root.AddComponent<StaffWorker>();
+            SetRef(worker, "nameTag", nameTag);
+            SetRef(worker, "statusText", status);
+            SetRef(worker, "carriedGlass", glass);
+
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, StaffPrefabPath);
+            Object.DestroyImmediate(root);
+            return prefab;
+        }
+
+        private static void BuildStaffManager(GameObject staffPrefab)
+        {
+            var go = new GameObject("StaffManager");
+            go.AddComponent<NetworkObject>();
+            var manager = go.AddComponent<StaffManager>();
+
+            Transform Marker(string name, Vector3 pos)
+            {
+                var t = new GameObject(name).transform;
+                t.SetParent(go.transform, false);
+                t.position = pos;
+                return t;
+            }
+
+            var arrival = Marker("Arrival", new Vector3(4.7f, 0f, -7.6f));
+            var idle = new[] { Marker("Idle_0", new Vector3(1.0f, 0f, 3.78f)), Marker("Idle_1", new Vector3(-0.6f, 0f, 3.78f)), Marker("Idle_2", new Vector3(-2.2f, 0f, 3.78f)) };
+            var glassReturn = Marker("GlassReturn", new Vector3(1.2f, 0f, 3.85f));
+
+            SetRef(manager, "workerPrefab", staffPrefab.GetComponent<NetworkObject>());
+            SetRef(manager, "arrivalPoint", arrival);
+            SetRefs(manager, "idleSpots", idle.Cast<Object>().ToArray());
+            SetRef(manager, "glassReturnPoint", glassReturn);
+        }
+
+        private static void BuildStaffBoard(Palette m)
+        {
+            // Noticeboard on the left wall (x = -6), readable from inside (text faces +X).
+            const float wallX = -5.97f;
+            var board = new GameObject("StaffBoard").transform;
+            Primitive(PrimitiveType.Cube, "Cork", board, new Vector3(wallX, 1.68f, -2.0f), new Vector3(0.03f, 1.45f, 2.9f), m.Crate, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Frame", board, new Vector3(wallX - 0.01f, 1.68f, -2.0f), new Vector3(0.02f, 1.52f, 2.98f), m.WoodDark, keepCollider: false);
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var faceRoom = Quaternion.Euler(0f, -90f, 0f);
+
+            Text BoardText(string name, float y, float z, Vector2 size, int fontSize, TextAnchor align, Color colour)
+            {
+                var canvas = WorldCanvas(name, board, new Vector3(wallX + 0.025f, y, z), size, 0.002f);
+                Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+                canvas.rotation = faceRoom;
+                var t = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, size);
+                t.font = font;
+                t.fontSize = fontSize;
+                t.alignment = align;
+                t.color = colour;
+                t.horizontalOverflow = HorizontalWrapMode.Overflow;
+                return t;
+            }
+
+            GameObject Button(string name, float y, float z, Vector3 size, Material mat, StaffButton.Kind kind, int row, int weekday, string label)
+            {
+                var b = Primitive(PrimitiveType.Cube, name, board, new Vector3(wallX + 0.02f, y, z), size, mat, keepCollider: true);
+                var sb = b.AddComponent<StaffButton>();
+                var so = new SerializedObject(sb);
+                so.FindProperty("kind").intValue = (int)kind;
+                so.FindProperty("row").intValue = row;
+                so.FindProperty("weekday").intValue = weekday;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                if (!string.IsNullOrEmpty(label))
+                {
+                    var canvas = WorldCanvas("Label", b.transform, Vector3.zero, new Vector2(160f, 50f), 1f);
+                    Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+                    canvas.position = new Vector3(wallX + 0.045f, y, z);
+                    canvas.rotation = faceRoom;
+                    canvas.localScale = new Vector3(0.002f / size.z, 0.002f / size.y, 1f); // undo the button's non-uniform scale
+                    var t = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(160f, 50f));
+                    t.font = font;
+                    t.fontSize = 30;
+                    t.fontStyle = FontStyle.Bold;
+                    t.alignment = TextAnchor.MiddleCenter;
+                    t.color = Color.black;
+                    t.text = label;
+                }
+                return b;
+            }
+
+            var dark = new Color(0.12f, 0.08f, 0.05f);
+            BoardText("Title", 2.27f, -2.0f, new Vector2(1200f, 60f), 44, TextAnchor.MiddleCenter, dark).text = "STAFF NOTICEBOARD";
+            BoardText("ApplicantsHeader", 2.12f, -2.9f, new Vector2(500f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "WANTED: BAR STAFF (applicants today)";
+            BoardText("StaffHeader", 2.12f, -1.25f, new Vector2(560f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "YOUR STAFF & ROTA";
+
+            var applicantTexts = new Text[StaffManager.ApplicantsPerDay];
+            var hireButtons = new GameObject[StaffManager.ApplicantsPerDay];
+            var staffTexts = new Text[StaffManager.MaxStaff];
+            var fireButtons = new GameObject[StaffManager.MaxStaff];
+            var rota = new Renderer[StaffManager.MaxStaff * 7];
+            var headers = new Text[7];
+
+            for (int i = 0; i < StaffManager.ApplicantsPerDay; i++)
+            {
+                float y = 1.88f - i * 0.38f;
+                applicantTexts[i] = BoardText($"Applicant_{i}", y, -3.0f, new Vector2(330f, 120f), 26, TextAnchor.MiddleLeft, dark);
+                hireButtons[i] = Button($"Hire_{i}", y, -2.42f, new Vector3(0.03f, 0.12f, 0.24f), m.HandleCider, StaffButton.Kind.Hire, i, 0, "HIRE");
+            }
+
+            for (int d = 0; d < 7; d++)
+                headers[d] = BoardText($"Day_{d}", 2.0f, -1.42f + d * 0.09f, new Vector2(60f, 40f), 24, TextAnchor.MiddleCenter, dark);
+
+            for (int r = 0; r < StaffManager.MaxStaff; r++)
+            {
+                float y = 1.85f - r * 0.38f;
+                staffTexts[r] = BoardText($"Staff_{r}", y, -1.86f, new Vector2(260f, 110f), 24, TextAnchor.MiddleLeft, dark);
+                for (int d = 0; d < 7; d++)
+                    rota[r * 7 + d] = Button($"Rota_{r}_{d}", y, -1.42f + d * 0.09f, new Vector3(0.03f, 0.08f, 0.075f), m.Liquid, StaffButton.Kind.Rota, r, d, null)
+                        .GetComponent<Renderer>();
+                fireButtons[r] = Button($"Fire_{r}", y, -0.72f, new Vector3(0.03f, 0.1f, 0.2f), m.Customer, StaffButton.Kind.Fire, r, 0, "FIRE");
+            }
+
+            var staffBoard = board.gameObject.AddComponent<StaffBoard>();
+            SetRefs(staffBoard, "applicantTexts", applicantTexts.Cast<Object>().ToArray());
+            SetRefs(staffBoard, "hireButtons", hireButtons.Cast<Object>().ToArray());
+            SetRefs(staffBoard, "staffTexts", staffTexts.Cast<Object>().ToArray());
+            SetRefs(staffBoard, "fireButtons", fireButtons.Cast<Object>().ToArray());
+            SetRefs(staffBoard, "rotaButtons", rota.Cast<Object>().ToArray());
+            SetRefs(staffBoard, "weekdayHeaders", headers.Cast<Object>().ToArray());
         }
 
         // ------------------------------------------------------------------ M4: kegs + cellar

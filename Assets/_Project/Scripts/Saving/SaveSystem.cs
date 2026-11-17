@@ -5,6 +5,7 @@ using System.Linq;
 using BarOwner.Bar;
 using BarOwner.Day;
 using BarOwner.Economy;
+using BarOwner.Staff;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -78,6 +79,13 @@ namespace BarOwner.Saving
                 kegs = Keg.All.Where(k => k != null && k.IsSpawned)
                     .Select(k => new KegData { drink = (int)k.Drink, pints = k.Pints, position = k.transform.position, rotation = k.transform.rotation })
                     .ToArray(),
+                staff = StaffManager.Instance != null
+                    ? StaffManager.Instance.ServerGetHired().Select(h => new StaffSave
+                    {
+                        id = h.Id, name = h.Name.ToString(), speed = h.Speed, charm = h.Charm, honesty = h.Honesty,
+                        wagePence = h.WagePence, rota = h.Rota,
+                    }).ToArray()
+                    : Array.Empty<StaffSave>(),
                 pendingDeliveries = KegSupplier.Instance != null
                     ? KegSupplier.Instance.ServerPendingDrinks().Select(d => (int)d).ToArray()
                     : Array.Empty<int>(),
@@ -143,6 +151,13 @@ namespace BarOwner.Saving
                     supplier.ServerQueueDelivery((DrinkType)drink, 5f);
             }
 
+            if (StaffManager.Instance != null && data.staff != null)
+                StaffManager.Instance.ServerSetHired(data.staff.Select(h => new StaffData
+                {
+                    Id = h.id, Name = new Unity.Collections.FixedString32Bytes(h.name), Speed = (byte)h.speed,
+                    Charm = (byte)h.charm, Honesty = (byte)h.honesty, WagePence = h.wagePence, Rota = (byte)h.rota,
+                }));
+
             Debug.Log($"[SaveSystem] Loaded day {data.day}");
             DayClock.Instance?.ServerAnnounce($"Welcome back! Day {data.day} · Till {Money.Format(data.tillPence)}", 4f);
         }
@@ -160,6 +175,15 @@ namespace BarOwner.Saving
             public SocketData[] sockets;
             public KegData[] kegs;
             public int[] pendingDeliveries;
+            public StaffSave[] staff;
+        }
+
+        [Serializable]
+        private class StaffSave
+        {
+            public int id;
+            public string name;
+            public int speed, charm, honesty, wagePence, rota;
         }
 
         [Serializable]

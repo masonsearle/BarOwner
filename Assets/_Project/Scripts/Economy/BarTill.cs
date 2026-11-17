@@ -53,6 +53,14 @@ namespace BarOwner.Economy
             if (IsServer) _pence.Value = pence;
         }
 
+        /// <summary>SERVER: pay a bill that can't be refused (wages). The till can go negative.</summary>
+        public void ServerSpend(int pence, Vector3 where)
+        {
+            if (!IsServer || pence <= 0) return;
+            _pence.Value -= pence;
+            MoneyReceivedRpc(-pence, where);
+        }
+
         /// <summary>SERVER: pay for something. False (and nothing spent) if the till can't cover it.</summary>
         public bool ServerTrySpend(int pence, Vector3 where)
         {
