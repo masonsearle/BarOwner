@@ -14,6 +14,9 @@ namespace BarOwner.Bar
     {
         public const float Capacity = 20f; // pints
 
+        /// <summary>Every spawned loose keg (server lookups, saving).</summary>
+        public static readonly System.Collections.Generic.List<Keg> All = new();
+
         [SerializeField, Tooltip("Contents for kegs placed in the scene (runtime kegs are set by the server).")]
         private DrinkType startingDrink = DrinkType.Lager;
         [SerializeField] private Renderer band;
@@ -39,6 +42,7 @@ namespace BarOwner.Bar
 
         public override void OnNetworkSpawn()
         {
+            All.Add(this);
             _drink.OnValueChanged += OnDrinkChanged;
             _pints.OnValueChanged += OnPintsChanged;
             if (IsServer && _pints.Value < 0f) ServerSetContents(startingDrink, Capacity);
@@ -47,6 +51,7 @@ namespace BarOwner.Bar
 
         public override void OnNetworkDespawn()
         {
+            All.Remove(this);
             _drink.OnValueChanged -= OnDrinkChanged;
             _pints.OnValueChanged -= OnPintsChanged;
         }

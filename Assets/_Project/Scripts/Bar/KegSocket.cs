@@ -20,6 +20,9 @@ namespace BarOwner.Bar
         [SerializeField] private float connectRange = 3f;
         [SerializeField] private bool startConnectedAndFull = true;
 
+        /// <summary>Every spawned socket (saving/loading).</summary>
+        public static readonly System.Collections.Generic.List<KegSocket> All = new();
+
         private readonly NetworkVariable<bool> _connected = new(false);
         private readonly NetworkVariable<float> _pints = new(0f);
 
@@ -34,6 +37,7 @@ namespace BarOwner.Bar
 
         public override void OnNetworkSpawn()
         {
+            All.Add(this);
             _connected.OnValueChanged += OnConnectedChanged;
             if (IsServer && startConnectedAndFull)
             {
@@ -43,7 +47,19 @@ namespace BarOwner.Bar
             Refresh();
         }
 
-        public override void OnNetworkDespawn() => _connected.OnValueChanged -= OnConnectedChanged;
+        public override void OnNetworkDespawn()
+        {
+            All.Remove(this);
+            _connected.OnValueChanged -= OnConnectedChanged;
+        }
+
+        /// <summary>SERVER (loading a save): set what's plugged in.</summary>
+        public void ServerSetState(bool connected, float pints)
+        {
+            if (!IsServer) return;
+            _connected.Value = connected;
+            _pints.Value = connected ? Mathf.Clamp(pints, 0f, Keg.Capacity) : 0f;
+        }
 
         /// <summary>SERVER: take up to <paramref name="amount"/> pints from the keg. Returns what came out.</summary>
         public float ServerDrain(float amount)

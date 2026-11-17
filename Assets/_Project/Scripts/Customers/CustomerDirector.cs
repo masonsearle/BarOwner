@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using BarOwner.Bar;
 using BarOwner.Day;
+using BarOwner.Economy;
 using Unity.AI.Navigation;
 using Unity.Netcode;
 using UnityEngine;
@@ -73,7 +74,10 @@ namespace BarOwner.Customers
             if (!accepting || _active.Count >= maxCustomers || Time.time < _nextSpawnAt) return;
 
             SpawnCustomer();
-            _nextSpawnAt = Time.time + ArrivalInterval(clock.Hour) * Random.Range(0.7f, 1.3f);
+            // Word gets around: a 5-star pub draws customers ~2.5x as often as a 0-star dive.
+            float reputation = PubLedger.Instance != null ? PubLedger.Instance.Reputation : 1f;
+            float popularity = Mathf.Lerp(1.5f, 0.6f, reputation / 5f);
+            _nextSpawnAt = Time.time + ArrivalInterval(clock.Hour) * popularity * Random.Range(0.7f, 1.3f);
         }
 
         /// <summary>Quiet afternoon, lunchtime bump, busy evening.</summary>

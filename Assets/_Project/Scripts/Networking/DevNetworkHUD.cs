@@ -1,4 +1,5 @@
 using BarOwner.Player;
+using BarOwner.Saving;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
@@ -9,7 +10,8 @@ namespace BarOwner.Networking
 {
     /// <summary>
     /// Temporary dev controls until there's a real main menu:
-    ///   H = host, J = join the address below, F8 = disconnect.
+    ///   H = host (continues the save if there is one), N = new game (deletes the save, then hosts),
+    ///   J = join the address below, F8 = disconnect.
     /// Also swaps the scene's lobby camera for the player camera once you've spawned.
     /// </summary>
     public class DevNetworkHUD : MonoBehaviour
@@ -20,6 +22,9 @@ namespace BarOwner.Networking
         private string joinAddress = "127.0.0.1";
         [SerializeField] private ushort port = 7777;
 
+        private string _saveSummary;
+        private float _nextSaveCheck;
+
         private void Update()
         {
             var nm = NetworkManager.Singleton;
@@ -29,8 +34,18 @@ namespace BarOwner.Networking
 
             if (!nm.IsListening)
             {
-                SetStatus($"BAROWNER  (dev)\n[H] Host game    [J] Join {joinAddress}:{port}");
-                if (keyboard != null && keyboard.hKey.wasPressedThisFrame)
+                if (Time.unscaledTime >= _nextSaveCheck)
+                {
+                    _saveSummary = SaveSystem.PeekSummary();
+                    _nextSaveCheck = Time.unscaledTime + 2f;
+                }
+
+                string host = _saveSummary != null ? $"[H] Continue ({_saveSummary})    [N] New game" : "[H] Host new game";
+                SetStatus($"BAROWNER  (dev)\n{host}    [J] Join {joinAddress}:{port}");
+
+                bool newGame = keyboard != null && keyboard.nKey.wasPressedThisFrame;
+                if (newGame) SaveSystem.DeleteSave();
+                if (keyboard != null && (keyboard.hKey.wasPressedThisFrame || newGame))
                 {
                     // Listen on all interfaces so other PCs on the LAN can join too.
                     Transport(nm)?.SetConnectionData("127.0.0.1", port, "0.0.0.0");

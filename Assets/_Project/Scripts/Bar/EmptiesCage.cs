@@ -21,6 +21,7 @@ namespace BarOwner.Bar
 
             int deposit = KegSupplier.Instance != null ? KegSupplier.Instance.EmptyKegDepositPence : 0;
             BarTill.Instance?.ServerDeposit(deposit, keg.transform.position + Vector3.up);
+            PubLedger.Instance?.ServerRecordDeposit(deposit);
             keg.NetworkObject.Despawn();
         }
     }

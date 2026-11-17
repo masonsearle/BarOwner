@@ -2,6 +2,7 @@ using BarOwner.Bar;
 using BarOwner.Day;
 using BarOwner.Economy;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace BarOwner.UI
@@ -17,9 +18,13 @@ namespace BarOwner.UI
         [SerializeField] private Text moneyGainText;
         [SerializeField] private Text clockText;
         [SerializeField] private Text announcementText;
+        [SerializeField] private GameObject reportPanel;
+        [SerializeField] private Text reportText;
+        [SerializeField] private float reportSeconds = 30f;
 
         private float _gainVisibleUntil;
         private float _announcementUntil;
+        private float _reportUntil;
         private string _lastClock;
 
         private void Awake()
@@ -30,6 +35,7 @@ namespace BarOwner.UI
             if (moneyGainText != null) moneyGainText.text = "";
             if (clockText != null) clockText.text = "";
             if (announcementText != null) announcementText.text = "";
+            if (reportPanel != null) reportPanel.SetActive(false);
         }
 
         private void OnEnable()
@@ -37,6 +43,7 @@ namespace BarOwner.UI
             BarTill.BalanceChanged += OnBalanceChanged;
             BarTill.MoneyReceived += OnMoneyReceived;
             DayClock.Announcement += OnAnnouncement;
+            PubLedger.DayReport += OnDayReport;
             if (BarTill.Instance != null && BarTill.Instance.IsSpawned) OnBalanceChanged(BarTill.Instance.Pence);
         }
 
@@ -45,6 +52,7 @@ namespace BarOwner.UI
             BarTill.BalanceChanged -= OnBalanceChanged;
             BarTill.MoneyReceived -= OnMoneyReceived;
             DayClock.Announcement -= OnAnnouncement;
+            PubLedger.DayReport -= OnDayReport;
         }
 
         private void OnDestroy()
@@ -56,6 +64,7 @@ namespace BarOwner.UI
         {
             UpdateClock();
             UpdateAnnouncement();
+            UpdateReport();
 
             if (moneyGainText == null || _gainVisibleUntil <= 0f) return;
             float remaining = _gainVisibleUntil - Time.time;
@@ -84,6 +93,8 @@ namespace BarOwner.UI
                     _ => "CLOSING",
                 };
                 text = clock.Phase == PubPhase.Closed ? $"Day {clock.Day}  ·  {phase}" : $"Day {clock.Day}  ·  {clock.ClockText}  ·  {phase}";
+                if (PubLedger.Instance != null && PubLedger.Instance.IsSpawned)
+                    text += $"  ·  Reputation {PubLedger.Instance.Reputation:0.0}/5";
             }
             if (text != _lastClock)
             {
@@ -104,6 +115,22 @@ namespace BarOwner.UI
             }
             var c = announcementText.color;
             announcementText.color = new Color(c.r, c.g, c.b, Mathf.Clamp01(remaining * 2f));
+        }
+
+        private void UpdateReport()
+        {
+            if (reportPanel == null || !reportPanel.activeSelf) return;
+            var keyboard = Keyboard.current;
+            bool dismissed = keyboard != null && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
+            if (dismissed || Time.time >= _reportUntil) reportPanel.SetActive(false);
+        }
+
+        private void OnDayReport(string report)
+        {
+            if (reportPanel == null || reportText == null) return;
+            reportText.text = report;
+            reportPanel.SetActive(true);
+            _reportUntil = Time.time + reportSeconds;
         }
 
         private void OnAnnouncement(string text, float seconds)

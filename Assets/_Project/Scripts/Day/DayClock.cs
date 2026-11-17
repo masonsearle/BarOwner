@@ -34,19 +34,12 @@ namespace BarOwner.Day
         private readonly NetworkVariable<int> _day = new(1);
         private readonly NetworkVariable<PubPhase> _phase = new(PubPhase.Closed);
         private readonly NetworkVariable<float> _minutes = new(12 * 60);
-        private readonly NetworkVariable<int> _served = new(0);
-        private readonly NetworkVariable<int> _walkouts = new(0);
-        private readonly NetworkVariable<int> _openingBalance = new(0);
-
-        private bool _hasOpenedBefore;
 
         public int Day => _day.Value;
         public PubPhase Phase => _phase.Value;
         public bool AcceptingNewCustomers => _phase.Value == PubPhase.Open;
         public bool IsServing => _phase.Value == PubPhase.Open || _phase.Value == PubPhase.LastOrders;
         public float Hour => _minutes.Value / 60f;
-        public int Served => _served.Value;
-        public int Walkouts => _walkouts.Value;
 
         public string ClockText
         {
@@ -105,13 +98,8 @@ namespace BarOwner.Day
         public void RequestOpenRpc()
         {
             if (_phase.Value != PubPhase.Closed) return;
-            if (_hasOpenedBefore) _day.Value += 1;
-            _hasOpenedBefore = true;
-
             _minutes.Value = openHour * 60f;
-            _served.Value = 0;
-            _walkouts.Value = 0;
-            _openingBalance.Value = BarTill.Instance != null ? BarTill.Instance.Pence : 0;
+            PubLedger.Instance?.ServerBeginDay();
             _phase.Value = PubPhase.Open;
             AnnounceRpc($"Day {_day.Value}: the pub is open!", 3f);
         }
@@ -122,16 +110,24 @@ namespace BarOwner.Day
             if (_phase.Value == PubPhase.Open) _minutes.Value = Mathf.Max(_minutes.Value, LastOrdersAt);
         }
 
-        // ---------------------------------------------------------------- server stats
+        // ---------------------------------------------------------------- server
 
-        public void ServerRecordServed() { if (IsServer) _served.Value += 1; }
-        public void ServerRecordWalkout() { if (IsServer) _walkouts.Value += 1; }
+        /// <summary>SERVER (loading a save): jump to a given day, closed, ready to open.</summary>
+        public void ServerSetDay(int day)
+        {
+            if (!IsServer) return;
+            _day.Value = Mathf.Max(1, day);
+            _phase.Value = PubPhase.Closed;
+            _minutes.Value = openHour * 60f;
+        }
 
         private void EndDay()
         {
             _phase.Value = PubPhase.Closed;
-            int takings = (BarTill.Instance != null ? BarTill.Instance.Pence : 0) - _openingBalance.Value;
-            AnnounceRpc($"Day {_day.Value} done\nTakings {Money.Format(takings)}  ·  Served {_served.Value}  ·  Walked out {_walkouts.Value}", 8f);
+            PubLedger.Instance?.ServerEndDay(_day.Value);
+            _day.Value += 1;
+            _minutes.Value = openHour * 60f;
+            Saving.SaveSystem.Instance?.ServerSave();
         }
 
         /// <summary>SERVER: show a centre-screen message to everyone.</summary>

@@ -7,6 +7,7 @@ using BarOwner.Economy;
 using BarOwner.Interaction;
 using BarOwner.Networking;
 using BarOwner.Player;
+using BarOwner.Saving;
 using BarOwner.UI;
 using Unity.AI.Navigation;
 using Unity.Netcode;
@@ -78,6 +79,8 @@ namespace BarOwner.EditorTools
             BuildGlassRack(mats, glassPrefab);
             BuildTill(mats);
             BuildDayClock();
+            BuildPubManagers();
+            BuildPriceBoard(mats);
             BuildOpenSign(mats);
             BuildCustomerDirector(customerPrefab, glassPrefab);
             BuildLightSwitch(mats, barLights);
@@ -621,6 +624,66 @@ namespace BarOwner.EditorTools
             go.AddComponent<DayClock>();
         }
 
+        private static void BuildPubManagers()
+        {
+            var ledger = new GameObject("PubLedger");
+            ledger.AddComponent<NetworkObject>();
+            ledger.AddComponent<PubLedger>();
+
+            var save = new GameObject("SaveSystem");
+            save.AddComponent<NetworkObject>();
+            save.AddComponent<SaveSystem>();
+        }
+
+        private static void BuildPriceBoard(Palette m)
+        {
+            // Chalkboard on the back wall, past the end of the shelves (staff side).
+            var board = new GameObject("PriceBoard").transform;
+            Primitive(PrimitiveType.Cube, "Chalkboard", board, new Vector3(2.7f, 1.62f, 4.985f), new Vector3(0.98f, 0.78f, 0.03f), m.Dark, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Frame", board, new Vector3(2.7f, 1.62f, 4.995f), new Vector3(1.04f, 0.84f, 0.02f), m.WoodDark, keepCollider: false);
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+            Text BoardText(string name, Vector3 pos, Vector2 size, int fontSize, string text, TextAnchor align)
+            {
+                var canvas = WorldCanvas(name, board, pos, size, 0.0022f);
+                Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+                canvas.rotation = Quaternion.identity; // faces the staff (looking +Z)
+                var t = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, size);
+                t.font = font;
+                t.fontSize = fontSize;
+                t.alignment = align;
+                t.color = new Color(0.95f, 0.95f, 0.9f);
+                t.text = text;
+                return t;
+            }
+
+            BoardText("Title", new Vector3(2.7f, 1.93f, 4.965f), new Vector2(400f, 60f), 40, "PRICES", TextAnchor.MiddleCenter);
+
+            DrinkType[] drinks = { DrinkType.Lager, DrinkType.Bitter, DrinkType.Cider };
+            var labels = new Text[drinks.Length];
+            for (int i = 0; i < drinks.Length; i++)
+            {
+                float y = 1.74f - i * 0.2f;
+                labels[i] = BoardText($"Label_{drinks[i]}", new Vector3(2.52f, y, 4.965f), new Vector2(270f, 60f), 30, "", TextAnchor.MiddleLeft);
+
+                foreach (var (dx, delta, symbol) in new[] { (2.96f, -10, "-"), (3.08f, 10, "+") })
+                {
+                    var button = Primitive(PrimitiveType.Cube, $"{(delta < 0 ? "Minus" : "Plus")}_{drinks[i]}", board,
+                        new Vector3(dx, y, 4.96f), new Vector3(0.09f, 0.09f, 0.03f), m.Ceiling, keepCollider: true);
+                    var pb = button.AddComponent<PriceButton>();
+                    var so = new SerializedObject(pb);
+                    so.FindProperty("drink").intValue = (int)drinks[i];
+                    so.FindProperty("deltaPence").intValue = delta;
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                    var sym = BoardText("Symbol", new Vector3(dx, y, 4.943f), new Vector2(40f, 40f), 36, symbol, TextAnchor.MiddleCenter);
+                    sym.color = Color.black;
+                }
+            }
+
+            var priceBoard = board.gameObject.AddComponent<PriceBoard>();
+            SetRefs(priceBoard, "labels", labels.Cast<Object>().ToArray());
+        }
+
         private static void BuildOpenSign(Palette m)
         {
             var board = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -819,7 +882,18 @@ namespace BarOwner.EditorTools
             announcement.color = new Color(1f, 0.92f, 0.6f);
             announcement.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.9f);
 
+            var reportPanel = UiElement<Image>("DayReport", canvasGo.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(720f, 640f));
+            reportPanel.color = new Color(0.05f, 0.04f, 0.03f, 0.88f);
+            var reportText = UiElement<Text>("Text", reportPanel.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(640f, 580f));
+            reportText.font = font;
+            reportText.fontSize = 26;
+            reportText.alignment = TextAnchor.UpperLeft;
+            reportText.color = new Color(1f, 0.95f, 0.85f);
+            reportPanel.gameObject.SetActive(false);
+
             var hud = canvasGo.AddComponent<PlayerHUD>();
+            SetRef(hud, "reportPanel", reportPanel.gameObject);
+            SetRef(hud, "reportText", reportText);
             SetRef(hud, "clockText", clockText);
             SetRef(hud, "announcementText", announcement);
             SetRef(hud, "promptText", prompt);

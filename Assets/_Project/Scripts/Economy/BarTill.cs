@@ -47,6 +47,12 @@ namespace BarOwner.Economy
             MoneyReceivedRpc(pence, where);
         }
 
+        /// <summary>SERVER (loading a save): set the balance outright.</summary>
+        public void ServerSetBalance(int pence)
+        {
+            if (IsServer) _pence.Value = pence;
+        }
+
         /// <summary>SERVER: pay for something. False (and nothing spent) if the till can't cover it.</summary>
         public bool ServerTrySpend(int pence, Vector3 where)
         {

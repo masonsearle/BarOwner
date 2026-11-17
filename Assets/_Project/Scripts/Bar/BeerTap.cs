@@ -57,7 +57,8 @@ namespace BarOwner.Bar
             if (keg != null && !keg.IsConnected) return $"~{name}: no keg connected. Plug one in down in the cellar";
             if (keg != null && !keg.HasBeer) return $"~{name}: *sputter* The keg's empty. Change it in the cellar";
             if (IsPouring && _pourer.Value != NetworkManager.LocalClientId) return $"~{name} (someone's pouring)";
-            string left = keg != null ? $"   ({Mathf.FloorToInt(keg.Pints)} pints left)" : "";
+            string price = Economy.PubLedger.Instance != null ? Money.Format(Economy.PubLedger.Instance.PricePence(drink)) : "";
+            string left = keg != null ? $"   ({price} · {Mathf.FloorToInt(keg.Pints)} pints left)" : "";
             return $"to pour {name}{left}";
         }
 

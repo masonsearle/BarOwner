@@ -64,6 +64,7 @@ namespace BarOwner.Customers
         private NavMeshAgent _agent;
         private CustomerDirector _director;
         private float _patienceRate;
+        private float _priceTolerance; // how much dearer than standard they'll pay (1.1 = +10%)
         private float _drinkUntil;
         private Vector3 _faceDirection;
         private Vector3 _glassDropPoint;
@@ -117,6 +118,7 @@ namespace BarOwner.Customers
             _seed.Value = seed;
             var rng = new System.Random(seed);
             _patienceRate = 1f / (patienceSeconds * (0.7f + 0.6f * (float)rng.NextDouble()));
+            _priceTolerance = 0.95f + 0.4f * (float)rng.NextDouble();
         }
 
         public void ServerQueueAt(Vector3 position)
@@ -191,14 +193,31 @@ namespace BarOwner.Customers
 
         private void BeginOrdering()
         {
+            DrinkType wants = Drinks.OnTap[Random.Range(0, Drinks.OnTap.Length)];
+            var ledger = PubLedger.Instance;
+            if (ledger != null && ledger.PriceRatio(wants) > EffectiveTolerance())
+            {
+                ReactRpc($"{Money.Format(ledger.PricePence(wants))} for a {Drinks.Name(wants)}?! No chance.");
+                ledger.ServerRecordPricedOut();
+                Leave();
+                return;
+            }
+
             _state.Value = CustomerState.Ordering;
-            _wants.Value = Drinks.OnTap[Random.Range(0, Drinks.OnTap.Length)];
+            _wants.Value = wants;
+        }
+
+        /// <summary>A well-loved pub can charge more before people balk.</summary>
+        private float EffectiveTolerance()
+        {
+            float reputation = PubLedger.Instance != null ? PubLedger.Instance.Reputation : 1f;
+            return _priceTolerance * (1f + 0.05f * reputation);
         }
 
         private void StormOut()
         {
             ReactRpc(Random.value < 0.5f ? "Forget it, I'm off!" : "Worst service in town!");
-            DayClock.Instance?.ServerRecordWalkout();
+            PubLedger.Instance?.ServerRecordWalkout();
             Leave();
         }
 
@@ -279,19 +298,22 @@ namespace BarOwner.Customers
                 return;
             }
 
-            int price = Drinks.PricePence(wanted);
-            int paid;
+            var ledger = PubLedger.Instance;
+            int price = ledger != null ? ledger.PricePence(wanted) : Drinks.PricePence(wanted);
+            bool feelsCheap = ledger == null || ledger.PriceRatio(wanted) <= EffectiveTolerance() * 0.85f;
+            int paid, tip = 0;
+            bool shortPint = glass.Fill < 0.95f;
             string line;
-            if (glass.Fill >= 0.95f)
+            if (!shortPint)
             {
                 paid = price;
-                // Quick, full pints earn tips: the happier they were, the likelier.
-                if (Random.value < 0.15f + 0.35f * _patience.Value)
+                // Quick, full, fairly-priced pints earn tips: the happier they were, the likelier.
+                if (feelsCheap && Random.value < 0.15f + 0.35f * _patience.Value)
                 {
-                    paid += Mathf.Max(10, Mathf.RoundToInt(price * 0.1f / 10f) * 10);
+                    tip = Mathf.Max(10, Mathf.RoundToInt(price * 0.1f / 10f) * 10);
                     line = "Lovely pint! Keep the change.";
                 }
-                else line = "Cheers!";
+                else line = feelsCheap ? "Cheers!" : "Pricey, but cheers.";
             }
             else
             {
@@ -299,10 +321,10 @@ namespace BarOwner.Customers
                 line = "Bit short, that...";
             }
 
-            BarTill.Instance?.ServerDeposit(paid, transform.position + Vector3.up * 2f);
-            DayClock.Instance?.ServerRecordServed();
+            BarTill.Instance?.ServerDeposit(paid + tip, transform.position + Vector3.up * 2f);
+            ledger?.ServerRecordSale(paid, tip, shortPint);
             glassObject.Despawn(); // it's theirs now; the empty comes back later
-            ReactRpc($"{line}  (+{Money.Format(paid)})");
+            ReactRpc($"{line}  (+{Money.Format(paid + tip)})");
 
             _wants.Value = DrinkType.None;
             _holding.Value = wanted;

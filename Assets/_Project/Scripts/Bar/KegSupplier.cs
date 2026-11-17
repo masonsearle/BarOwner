@@ -55,9 +55,37 @@ namespace BarOwner.Bar
                 return;
             }
 
-            _pending.Add((drink, Time.time + deliverySeconds));
-            _pendingCount.Value = _pending.Count;
+            PubLedger.Instance?.ServerRecordKegPurchase(price);
+            ServerQueueDelivery(drink, deliverySeconds);
             DayClock.Instance?.ServerAnnounce($"Ordered a {Drinks.Name(drink)} keg. Delivery in {deliverySeconds:0}s", 2.5f);
+        }
+
+        /// <summary>SERVER: a keg is on its way (already paid for).</summary>
+        public void ServerQueueDelivery(DrinkType drink, float inSeconds)
+        {
+            if (!IsServer) return;
+            _pending.Add((drink, Time.time + inSeconds));
+            _pendingCount.Value = _pending.Count;
+        }
+
+        /// <summary>SERVER: drinks of every keg still on its way (for saving).</summary>
+        public DrinkType[] ServerPendingDrinks()
+        {
+            var drinks = new DrinkType[_pending.Count];
+            for (int i = 0; i < _pending.Count; i++) drinks[i] = _pending[i].drink;
+            return drinks;
+        }
+
+        /// <summary>SERVER: spawn a loose keg (deliveries, loading a save).</summary>
+        public Keg ServerSpawnKeg(DrinkType drink, float pints, Vector3 position, Quaternion rotation)
+        {
+            if (!IsServer || kegPrefab == null) return null;
+            NetworkObject kegObject = Instantiate(kegPrefab, position, rotation);
+            kegObject.DontDestroyWithOwner = true;
+            kegObject.Spawn();
+            var keg = kegObject.GetComponent<Keg>();
+            keg.ServerSetContents(drink, pints);
+            return keg;
         }
 
         private void Update()
@@ -80,10 +108,7 @@ namespace BarOwner.Bar
             Vector3 offset = new((_dropIndex % 3 - 1) * 0.55f, 0.1f * (_dropIndex / 3 % 3), (_dropIndex / 3 % 2) * 0.55f);
             _dropIndex++;
 
-            NetworkObject kegObject = Instantiate(kegPrefab, basePos + offset, Quaternion.identity);
-            kegObject.DontDestroyWithOwner = true;
-            kegObject.Spawn();
-            kegObject.GetComponent<Keg>().ServerSetContents(drink, Keg.Capacity);
+            ServerSpawnKeg(drink, Keg.Capacity, basePos + offset, Quaternion.identity);
             DayClock.Instance?.ServerAnnounce($"Brewery delivery! A {Drinks.Name(drink)} keg is out front.", 3f);
         }
     }
