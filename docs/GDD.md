@@ -69,8 +69,8 @@ Each milestone ends in a playable build, tested in co-op.
 
 | # | Milestone | Done when |
 |---|---|---|
-| **M1** | **Foundation** | Two players can join, walk around a greybox bar, pick up / carry / throw objects, and see each other do it |
-| M2 | Pour a pint | Glass + tap: hold to fill, fill level visible, serve to a test customer, cash goes in the till (synced) |
+| ✅ M1 | Foundation | Two players can join, walk around a greybox bar, pick up / carry / throw objects, and see each other do it |
+| **M2** | **Pour a pint** | Glass + tap: hold to fill, fill level visible, serve to a test customer, cash goes in the till (synced) |
 | M3 | Customers v1 | Customers spawn, queue at the bar, order, wait with patience, pay or leave angry; day timer |
 | M4 | Kegs & cellar | Kegs deplete per pour; carry new keg from cellar and couple it; deliveries |
 | M5 | Day cycle & economy | Prep → service → close; prices; stock ordering; end-of-day report; save/load |
@@ -78,7 +78,9 @@ Each milestone ends in a playable build, tested in co-op.
 | M7 | Decor & theme nights | Furniture placement mode, ambience, theme night scheduling |
 | M8 | Vertical slice | Art + audio pass on one bar, menus, settings, Steam page ready |
 
+## Decisions
+- **Setting: a British pub.** Pints, £ (prices stored in pence), lager/bitter/cider on tap, quiz nights, "last orders".
+
 ## Open questions
-- Setting: UK pub, American dive bar, or generic? This affects drinks, currency and humour.
 - Do customers physically drink (glass returns as empties to collect)? Probably yes, since it creates a job.
 - Is there failure (bankruptcy) or only slower progress?

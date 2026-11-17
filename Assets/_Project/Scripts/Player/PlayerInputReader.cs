@@ -26,6 +26,9 @@ namespace BarOwner.Player
         /// <summary>E / gamepad north: use the thing you're looking at.</summary>
         public bool InteractPressed => GameplayActive && _interact != null && _interact.WasPressedThisFrame();
 
+        /// <summary>Interact button currently down (for hold-to-use things like taps).</summary>
+        public bool InteractHeld => GameplayActive && _interact != null && _interact.IsPressed();
+
         /// <summary>Right mouse / left trigger: throw the held object.</summary>
         public bool ThrowPressed
         {

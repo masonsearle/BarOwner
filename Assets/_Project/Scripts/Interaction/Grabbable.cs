@@ -44,12 +44,38 @@ namespace BarOwner.Interaction
         public override void OnNetworkSpawn()
         {
             if (IsServer) NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
+            _holderId.OnValueChanged += OnHolderChanged;
+            OnHolderChanged(NoHolder, _holderId.Value); // spawned straight into our hand?
         }
 
         public override void OnNetworkDespawn()
         {
             if (IsServer && NetworkManager != null) NetworkManager.OnClientDisconnectCallback -= OnClientDisconnected;
+            _holderId.OnValueChanged -= OnHolderChanged;
             _pendingRequester = null;
+
+            // Item vanished while we were holding it (e.g. a customer took the pint).
+            var local = PlayerInteractor.Local;
+            if (local != null && local.Held == this) local.ForceDrop();
+        }
+
+        /// <summary>SERVER: hand this item to a client without them asking (e.g. a fresh glass from the rack).</summary>
+        public void ServerGrantTo(ulong clientId)
+        {
+            if (!IsServer || IsHeld) return;
+            if (NetworkObject.OwnerClientId != clientId) NetworkObject.ChangeOwnership(clientId);
+            _holderId.Value = clientId;
+        }
+
+        private void OnHolderChanged(ulong previous, ulong current)
+        {
+            // The server made us the holder without a request from us: queue it up for the local player.
+            if (current == NetworkManager.LocalClientId && _pendingRequester == null && PlayerInteractor.Local != null &&
+                PlayerInteractor.Local.Held != this)
+            {
+                _pendingRequester = PlayerInteractor.Local;
+                _pendingSince = Time.time;
+            }
         }
 
         public bool CanBeGrabbed => IsSpawned && !IsHeld && _pendingRequester == null;
@@ -78,11 +104,17 @@ namespace BarOwner.Interaction
             {
                 var requester = _pendingRequester;
                 _pendingRequester = null;
-                requester.BeginHold(this);
+                if (requester == null || !requester.BeginHold(this))
+                    NotifyReleased(); // hands were full: let go of the claim so others can take it
             }
-            else if ((IsHeld && !IsHeldByLocalPlayer) || Time.time - _pendingSince > PendingTimeout)
+            else if (IsHeld && !IsHeldByLocalPlayer)
             {
-                _pendingRequester = null; // someone else got it, or the request was lost
+                _pendingRequester = null; // someone else got it
+            }
+            else if (Time.time - _pendingSince > PendingTimeout)
+            {
+                _pendingRequester = null; // request or ownership got lost; don't leave a stale claim behind
+                if (IsHeldByLocalPlayer) NotifyReleased();
             }
         }
 

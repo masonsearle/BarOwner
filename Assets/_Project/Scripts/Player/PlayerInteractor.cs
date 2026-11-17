@@ -9,11 +9,15 @@ namespace BarOwner.Player
     /// <summary>
     /// Looks through the camera to find things to grab or use, and carries the held object with a
     /// springy physics hold (velocity-driven, so held items still collide with the world and heavy
-    /// ones lag behind). Runs only on the owning client.
+    /// ones lag behind). You can still use interactables while holding something (pour into the
+    /// glass you're holding, hand a pint to a customer). Runs only on the owning client.
     /// </summary>
     [RequireComponent(typeof(PlayerMotor))]
     public class PlayerInteractor : NetworkBehaviour
     {
+        /// <summary>The interactor of the player controlled on this machine.</summary>
+        public static PlayerInteractor Local { get; private set; }
+
         [Header("References")]
         [SerializeField] private Transform cameraTransform;
         [SerializeField] private Transform holdPoint;
@@ -37,6 +41,8 @@ namespace BarOwner.Player
         [SerializeField, Tooltip("Mass (kg) at which throw speed is halved.")] private float throwMassReference = 3f;
         [SerializeField, Tooltip("Mass (kg) at which walking speed is halved while carrying.")] private float carryMassReference = 40f;
 
+        private static readonly RaycastHit[] HitBuffer = new RaycastHit[16];
+
         private PlayerInputReader _input;
         private PlayerMotor _motor;
         private CharacterController _controller;
@@ -48,6 +54,7 @@ namespace BarOwner.Player
 
         private Grabbable _lookGrabbable;
         private IInteractable _lookInteractable;
+        private IHoldInteractable _activeHold;
 
         public Grabbable Held => _held;
 
@@ -58,9 +65,16 @@ namespace BarOwner.Player
             _controller = GetComponent<CharacterController>();
         }
 
+        public override void OnNetworkSpawn()
+        {
+            if (IsOwner) Local = this;
+        }
+
         public override void OnNetworkDespawn()
         {
+            EndActiveHold();
             if (_held != null) Release(Vector3.zero);
+            if (Local == this) Local = null;
         }
 
         private void Update()
@@ -69,22 +83,34 @@ namespace BarOwner.Player
 
             if (!_input.GameplayActive)
             {
+                EndActiveHold();
                 PlayerHUD.SetPrompt(null);
                 return;
             }
 
-            if (_held != null)
-            {
-                UpdateHolding();
-                return;
-            }
+            if (_held != null && !UpdateHolding()) return; // threw/dropped this frame
 
             Scan();
+            UpdateActiveHold();
 
-            if (_input.GrabPressed && _lookGrabbable != null && _lookGrabbable.CanBeGrabbed)
+            if (_input.InteractPressed && _lookInteractable != null)
+            {
+                if (_lookInteractable is IHoldInteractable hold)
+                {
+                    _activeHold = hold;
+                    hold.HoldStart(this);
+                }
+                else
+                {
+                    _lookInteractable.Interact(this);
+                }
+            }
+            else if (_held == null && _input.GrabPressed && _lookGrabbable != null && _lookGrabbable.CanBeGrabbed)
+            {
                 _lookGrabbable.RequestGrab(this);
-            else if (_input.InteractPressed && _lookInteractable != null)
-                _lookInteractable.Interact(this);
+            }
+
+            UpdatePrompt();
         }
 
         private void FixedUpdate()
@@ -111,19 +137,20 @@ namespace BarOwner.Player
                 body.angularVelocity = Vector3.zero;
         }
 
-        private void UpdateHolding()
+        /// <summary>Returns false if the item was dropped/thrown this frame.</summary>
+        private bool UpdateHolding()
         {
             // Lost it (despawned, or the server gave it to someone else)?
-            if (!_held.IsSpawned || !_held.IsOwner || !_held.IsHeldByLocalPlayer)
+            if (_held == null || !_held.IsSpawned || !_held.IsOwner || !_held.IsHeldByLocalPlayer)
             {
-                Release(Vector3.zero, notifyServer: false);
-                return;
+                ForceDrop();
+                return false;
             }
 
             if (Vector3.Distance(_held.Body.position, holdPoint.position) > breakDistance)
             {
                 Release(Vector3.zero);
-                return;
+                return false;
             }
 
             float scroll = _input.Scroll;
@@ -134,16 +161,16 @@ namespace BarOwner.Player
             {
                 float speed = maxThrowSpeed / (1f + _held.Body.mass / throwMassReference);
                 Release(cameraTransform.forward * speed + _controller.velocity);
-                return;
+                return false;
             }
 
             if (_input.GrabPressed)
             {
                 Release(_controller.velocity);
-                return;
+                return false;
             }
 
-            PlayerHUD.SetPrompt($"{_held.DisplayName}\n[LMB] Drop   [RMB] Throw   [Scroll] Distance");
+            return true;
         }
 
         private void Scan()
@@ -151,32 +178,71 @@ namespace BarOwner.Player
             _lookGrabbable = null;
             _lookInteractable = null;
 
-            if (Physics.Raycast(cameraTransform.position, cameraTransform.forward, out RaycastHit hit, reach,
-                    interactMask, QueryTriggerInteraction.Ignore))
+            int count = Physics.RaycastNonAlloc(cameraTransform.position, cameraTransform.forward, HitBuffer, reach,
+                interactMask, QueryTriggerInteraction.Ignore);
+
+            // Nearest hit that isn't the thing in our hands.
+            RaycastHit? nearest = null;
+            for (int i = 0; i < count; i++)
             {
-                _lookGrabbable = hit.collider.GetComponentInParent<Grabbable>();
-                _lookInteractable = hit.collider.GetComponentInParent<IInteractable>();
+                var hit = HitBuffer[i];
+                if (_held != null && hit.collider.transform.IsChildOf(_held.transform)) continue;
+                if (nearest == null || hit.distance < nearest.Value.distance) nearest = hit;
             }
 
-            string prompt = null;
+            if (nearest == null) return;
+            Collider col = nearest.Value.collider;
+            _lookInteractable = col.GetComponentInParent<IInteractable>();
+            _lookGrabbable = _held == null ? col.GetComponentInParent<Grabbable>() : null;
+
+            if (_lookInteractable != null && string.IsNullOrEmpty(_lookInteractable.GetPrompt(this)))
+                _lookInteractable = null;
+        }
+
+        private void UpdateActiveHold()
+        {
+            if (_activeHold == null) return;
+            bool stillTargeted = ReferenceEquals(_lookInteractable, _activeHold);
+            if (!_input.InteractHeld || !stillTargeted) EndActiveHold();
+        }
+
+        private void EndActiveHold()
+        {
+            if (_activeHold == null) return;
+            var hold = _activeHold;
+            _activeHold = null;
+            if (hold is Object unityObject && unityObject == null) return; // destroyed
+            hold.HoldEnd(this);
+        }
+
+        private void UpdatePrompt()
+        {
+            string look = null;
             if (_lookInteractable != null)
             {
-                string action = _lookInteractable.GetPrompt(this);
-                if (!string.IsNullOrEmpty(action)) prompt = $"[E] {action}";
-                else _lookInteractable = null;
+                string verb = _lookInteractable is IHoldInteractable ? "Hold [E]" : "[E]";
+                look = $"{verb} {_lookInteractable.GetPrompt(this)}";
             }
             else if (_lookGrabbable != null && _lookGrabbable.CanBeGrabbed)
             {
-                prompt = $"[LMB] Pick up {_lookGrabbable.DisplayName}{(_lookGrabbable.IsHeavy ? " (heavy)" : "")}";
+                look = $"[LMB] Pick up {_lookGrabbable.DisplayName}{(_lookGrabbable.IsHeavy ? " (heavy)" : "")}";
             }
 
-            PlayerHUD.SetPrompt(prompt);
+            if (_held == null)
+            {
+                PlayerHUD.SetPrompt(look);
+                return;
+            }
+
+            string heldName = _held.TryGetComponent(out IHeldDescription description) ? description.Describe() : _held.DisplayName;
+            string controls = "[LMB] Drop   [RMB] Throw   [Scroll] Distance";
+            PlayerHUD.SetPrompt(look != null ? $"{look}\n<size=18>{heldName} · {controls}</size>" : $"{heldName}\n<size=18>{controls}</size>");
         }
 
-        /// <summary>Called by Grabbable once the server has granted this player the item.</summary>
-        public void BeginHold(Grabbable grabbable)
+        /// <summary>Called by Grabbable once the server has granted this player the item. False if hands are full.</summary>
+        public bool BeginHold(Grabbable grabbable)
         {
-            if (_held != null || grabbable == null) return;
+            if (_held != null || grabbable == null) return false;
 
             _held = grabbable;
             _heldColliders = grabbable.GetComponentsInChildren<Collider>();
@@ -191,7 +257,11 @@ namespace BarOwner.Player
             _holdRotationOffset = Quaternion.Inverse(holdPoint.rotation) * body.rotation;
 
             _motor.SpeedMultiplier = 1f / (1f + body.mass / carryMassReference);
+            return true;
         }
+
+        /// <summary>Let go without telling the server (item was taken away or despawned).</summary>
+        public void ForceDrop() => Release(Vector3.zero, notifyServer: false);
 
         private void Release(Vector3 velocity, bool notifyServer = true)
         {
@@ -202,7 +272,7 @@ namespace BarOwner.Player
             _motor.SpeedMultiplier = 1f;
             PlayerHUD.SetPrompt(null);
 
-            if (item == null) return;
+            if (item == null) return; // destroyed already
 
             if (item.Body != null)
             {
