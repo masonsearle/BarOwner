@@ -93,7 +93,8 @@ namespace BarOwner.Player
             Scan();
             UpdateActiveHold();
 
-            if (_input.InteractPressed && _lookInteractable != null)
+            bool infoOnly = _lookInteractable != null && _lookInteractable.GetPrompt(this).StartsWith("~");
+            if (_input.InteractPressed && _lookInteractable != null && !infoOnly)
             {
                 if (_lookInteractable is IHoldInteractable hold)
                 {
@@ -220,8 +221,9 @@ namespace BarOwner.Player
             string look = null;
             if (_lookInteractable != null)
             {
-                string verb = _lookInteractable is IHoldInteractable ? "Hold [E]" : "[E]";
-                look = $"{verb} {_lookInteractable.GetPrompt(this)}";
+                string prompt = _lookInteractable.GetPrompt(this);
+                if (prompt.StartsWith("~")) look = prompt.Substring(1);
+                else look = $"{(_lookInteractable is IHoldInteractable ? "Hold [E]" : "[E]")} {prompt}";
             }
             else if (_lookGrabbable != null && _lookGrabbable.CanBeGrabbed)
             {

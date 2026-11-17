@@ -134,6 +134,12 @@ namespace BarOwner.Day
             AnnounceRpc($"Day {_day.Value} done\nTakings {Money.Format(takings)}  ·  Served {_served.Value}  ·  Walked out {_walkouts.Value}", 8f);
         }
 
+        /// <summary>SERVER: show a centre-screen message to everyone.</summary>
+        public void ServerAnnounce(string text, float seconds)
+        {
+            if (IsServer) AnnounceRpc(text, seconds);
+        }
+
         [Rpc(SendTo.Everyone)]
         private void AnnounceRpc(string text, float seconds) => Announcement?.Invoke(text, seconds);
     }

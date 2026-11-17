@@ -18,6 +18,8 @@ namespace BarOwner.Bar
         [SerializeField] private Transform spout;
         [SerializeField] private Transform handle;
         [SerializeField] private GameObject stream;
+        [SerializeField, Tooltip("The cellar coupler feeding this tap. Empty = endless beer (testing).")]
+        private KegSocket keg;
 
         [Header("Pouring")]
         [SerializeField, Tooltip("Pints per second.")] private float pourRate = 0.22f;
@@ -51,8 +53,12 @@ namespace BarOwner.Bar
         public string GetPrompt(PlayerInteractor interactor)
         {
             if (!IsSpawned) return null;
-            if (IsPouring && _pourer.Value != NetworkManager.LocalClientId) return $"{Drinks.Name(drink)} (someone's pouring)";
-            return $"Hold to pour {Drinks.Name(drink)}";
+            string name = Drinks.Name(drink);
+            if (keg != null && !keg.IsConnected) return $"~{name}: no keg connected. Plug one in down in the cellar";
+            if (keg != null && !keg.HasBeer) return $"~{name}: *sputter* The keg's empty. Change it in the cellar";
+            if (IsPouring && _pourer.Value != NetworkManager.LocalClientId) return $"~{name} (someone's pouring)";
+            string left = keg != null ? $"   ({Mathf.FloorToInt(keg.Pints)} pints left)" : "";
+            return $"to pour {name}{left}";
         }
 
         public void Interact(PlayerInteractor interactor) { } // pouring is hold-only
@@ -65,7 +71,7 @@ namespace BarOwner.Bar
         [Rpc(SendTo.Server)]
         private void StartPourRpc(RpcParams rpcParams = default)
         {
-            if (IsPouring) return;
+            if (IsPouring || (keg != null && !keg.HasBeer)) return;
             _pourer.Value = rpcParams.Receive.SenderClientId;
             _pourStartedAt = Time.time;
         }
@@ -92,6 +98,16 @@ namespace BarOwner.Bar
             }
 
             float amount = pourRate * Time.deltaTime;
+            if (keg != null)
+            {
+                amount = keg.ServerDrain(amount);
+                if (amount <= 0f)
+                {
+                    _pourer.Value = Nobody; // ran dry mid-pour
+                    return;
+                }
+            }
+
             PintGlass target = FindTarget(_pourer.Value);
             if (target != null) _spilt += target.ServerAddDrink(drink, amount);
             else _spilt += amount;

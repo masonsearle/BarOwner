@@ -131,7 +131,8 @@ namespace BarOwner.UI
         private void OnMoneyReceived(int pence, Vector3 where)
         {
             if (moneyGainText == null) return;
-            moneyGainText.text = $"+{Money.Format(pence)}";
+            moneyGainText.text = pence >= 0 ? $"+{Money.Format(pence)}" : Money.Format(pence);
+            moneyGainText.color = pence >= 0 ? new Color(1f, 0.9f, 0.4f) : new Color(1f, 0.45f, 0.4f);
             _gainVisibleUntil = Time.time + 2f;
         }
     }

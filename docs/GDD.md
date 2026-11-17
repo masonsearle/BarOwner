@@ -71,8 +71,8 @@ Each milestone ends in a playable build, tested in co-op.
 |---|---|---|
 | ✅ M1 | Foundation | Two players can join, walk around a greybox bar, pick up / carry / throw objects, and see each other do it |
 | ✅ M2 | Pour a pint | Glass + tap: hold to fill, fill level visible, serve to a test customer, cash goes in the till (synced) |
-| **M3** | **Customers v1** | Customers spawn, queue at the bar, order, wait with patience, pay or leave angry; day timer |
-| M4 | Kegs & cellar | Kegs deplete per pour; carry new keg from cellar and couple it; deliveries |
+| ✅ M3 | Customers v1 | Customers spawn, queue at the bar, order, wait with patience, pay or leave angry; day timer |
+| **M4** | **Kegs & cellar** | Kegs deplete per pour; carry new keg from cellar and couple it; deliveries |
 | M5 | Day cycle & economy | Prep → service → close; prices; stock ordering; end-of-day report; save/load |
 | M6 | Staff & rota | Hire, rota grid, staff AI serve/clean, wages |
 | M7 | Decor & theme nights | Furniture placement mode, ambience, theme night scheduling |

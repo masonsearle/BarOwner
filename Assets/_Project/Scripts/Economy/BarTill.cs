@@ -16,10 +16,10 @@ namespace BarOwner.Economy
         /// <summary>Fires on every client when the balance changes (and once on spawn).</summary>
         public static event Action<int> BalanceChanged;
 
-        /// <summary>Fires on every client when money comes in: (amount, world position).</summary>
+        /// <summary>Fires on every client when money moves: (amount, negative = spent; world position).</summary>
         public static event Action<int, Vector3> MoneyReceived;
 
-        [SerializeField] private int startingPence = 5000;
+        [SerializeField] private int startingPence = 15000;
 
         private readonly NetworkVariable<int> _pence = new(0);
 
@@ -45,6 +45,15 @@ namespace BarOwner.Economy
             if (!IsServer || pence == 0) return;
             _pence.Value += pence;
             MoneyReceivedRpc(pence, where);
+        }
+
+        /// <summary>SERVER: pay for something. False (and nothing spent) if the till can't cover it.</summary>
+        public bool ServerTrySpend(int pence, Vector3 where)
+        {
+            if (!IsServer || pence < 0 || _pence.Value < pence) return false;
+            _pence.Value -= pence;
+            if (pence > 0) MoneyReceivedRpc(-pence, where);
+            return true;
         }
 
         [Rpc(SendTo.Everyone)]

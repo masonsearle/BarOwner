@@ -38,13 +38,14 @@ namespace BarOwner.EditorTools
         private const string PlayerPrefabPath = PrefabDir + "/Player.prefab";
         private const string GlassPrefabPath = PrefabDir + "/PintGlass.prefab";
         private const string CustomerPrefabPath = PrefabDir + "/Customer.prefab";
+        private const string KegPrefabPath = PrefabDir + "/Keg.prefab";
 
         [MenuItem("BarOwner/Build Greybox Bar Scene", priority = 0)]
         public static void Build()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             if (File.Exists(ScenePath) && !EditorUtility.DisplayDialog("Rebuild greybox bar?",
-                    $"This overwrites {ScenePath}, the Player, PintGlass and Customer prefabs and the greybox materials. Manual edits to them will be lost.",
+                    $"This overwrites {ScenePath}, the Player, PintGlass, Customer and Keg prefabs and the greybox materials. Manual edits to them will be lost.",
                     "Rebuild", "Cancel"))
                 return;
 
@@ -56,8 +57,9 @@ namespace BarOwner.EditorTools
             GameObject playerPrefab = BuildPlayerPrefab(mats);
             GameObject glassPrefab = BuildGlassPrefab(mats);
             GameObject customerPrefab = BuildCustomerPrefab(mats);
+            GameObject kegPrefab = BuildKegPrefab(mats);
             NetworkPrefabsList prefabList = GetOrCreatePrefabList();
-            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab })
+            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab, kegPrefab })
             {
                 if (prefabList.Contains(prefab)) continue;
                 prefabList.Add(new NetworkPrefab { Prefab = prefab });
@@ -70,8 +72,9 @@ namespace BarOwner.EditorTools
             RenderSettings.ambientLight = new Color(0.16f, 0.14f, 0.18f);
 
             Light[] barLights = BuildRoom(mats);
-            BuildProps(mats, glassPrefab);
-            BuildTaps(mats);
+            BuildProps(mats, glassPrefab, kegPrefab);
+            var sockets = BuildCellar(mats, kegPrefab);
+            BuildTaps(mats, sockets);
             BuildGlassRack(mats, glassPrefab);
             BuildTill(mats);
             BuildDayClock();
@@ -211,7 +214,7 @@ namespace BarOwner.EditorTools
             return lights;
         }
 
-        private static void BuildProps(Palette m, GameObject glassPrefab)
+        private static void BuildProps(Palette m, GameObject glassPrefab, GameObject kegPrefab)
         {
             // Network objects live at the scene root (no plain-GameObject parents) to keep Netcode happy.
             for (int i = 0; i < 6; i++)
@@ -227,9 +230,16 @@ namespace BarOwner.EditorTools
             SpawnGrabbable("Crate", PrimitiveType.Cube, new Vector3(3.2f, 0.16f, -4.2f), new Vector3(0.5f, 0.3f, 0.35f), 6f, m.Crate);
             SpawnGrabbable("Crate", PrimitiveType.Cube, new Vector3(3.2f, 0.47f, -4.2f), new Vector3(0.5f, 0.3f, 0.35f), 6f, m.Crate);
 
-            SpawnGrabbable("Keg", PrimitiveType.Cylinder, new Vector3(4.0f, 0.31f, 4.2f), new Vector3(0.4f, 0.3f, 0.4f), 30f, m.Metal);
-            SpawnGrabbable("Keg", PrimitiveType.Cylinder, new Vector3(4.6f, 0.31f, 4.2f), new Vector3(0.4f, 0.3f, 0.4f), 30f, m.Metal);
-            SpawnGrabbable("Keg", PrimitiveType.Cylinder, new Vector3(5.2f, 0.31f, 4.2f), new Vector3(0.4f, 0.3f, 0.4f), 30f, m.Metal);
+            // One full spare keg of each in the cellar to start with.
+            DrinkType[] spares = { DrinkType.Lager, DrinkType.Bitter, DrinkType.Cider };
+            for (int i = 0; i < spares.Length; i++)
+            {
+                var keg = (GameObject)PrefabUtility.InstantiatePrefab(kegPrefab);
+                keg.transform.position = new Vector3(3.9f + i * 0.6f, 0.31f, 3.55f);
+                var so = new SerializedObject(keg.GetComponent<Keg>());
+                so.FindProperty("startingDrink").intValue = (int)spares[i];
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
         }
 
         // ------------------------------------------------------------------ M2: pint glass, taps, rack, till, customer
@@ -264,7 +274,7 @@ namespace BarOwner.EditorTools
             return prefab;
         }
 
-        private static void BuildTaps(Palette m)
+        private static void BuildTaps(Palette m, System.Collections.Generic.Dictionary<DrinkType, KegSocket> sockets)
         {
             // The "font": a crossbar on two posts in the middle of the counter. Taps hang off it,
             // spouts face the staff side (+Z) over a drip tray.
@@ -312,6 +322,7 @@ namespace BarOwner.EditorTools
                 so.FindProperty("spout").objectReferenceValue = spout;
                 so.FindProperty("handle").objectReferenceValue = pivot;
                 so.FindProperty("stream").objectReferenceValue = stream;
+                so.FindProperty("keg").objectReferenceValue = sockets.TryGetValue(t.drink, out var socket) ? socket : null;
                 so.ApplyModifiedPropertiesWithoutUndo();
             }
         }
@@ -349,6 +360,171 @@ namespace BarOwner.EditorTools
             Primitive(PrimitiveType.Cube, "Screen", till.transform, new Vector3(0f, 0.75f, 0.2f), new Vector3(0.6f, 0.5f, 0.1f), m.Hazard, keepCollider: false);
             till.AddComponent<NetworkObject>();
             till.AddComponent<BarTill>();
+        }
+
+        // ------------------------------------------------------------------ M4: kegs + cellar
+
+        private static GameObject BuildKegPrefab(Palette m)
+        {
+            var root = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            root.name = "Keg";
+            root.transform.localScale = new Vector3(0.4f, 0.3f, 0.4f);
+            root.GetComponent<Renderer>().sharedMaterial = m.Metal;
+            Object.DestroyImmediate(root.GetComponent<Collider>());
+            var mc = root.AddComponent<MeshCollider>();
+            mc.sharedMesh = root.GetComponent<MeshFilter>().sharedMesh;
+            mc.convex = true;
+
+            var band = KegBand(root.transform, m);
+            AddNetworkPhysics(root, 30f, "Keg");
+            var keg = root.AddComponent<Keg>();
+            SetRef(keg, "band", band);
+
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, KegPrefabPath);
+            Object.DestroyImmediate(root);
+            return prefab;
+        }
+
+        private static Renderer KegBand(Transform keg, Palette m)
+        {
+            Primitive(PrimitiveType.Cylinder, "RimTop", keg, new Vector3(0f, 0.92f, 0f), new Vector3(1.04f, 0.06f, 1.04f), m.Dark, keepCollider: false);
+            var band = Primitive(PrimitiveType.Cylinder, "Band", keg, new Vector3(0f, 0.35f, 0f), new Vector3(1.03f, 0.14f, 1.03f), m.Liquid, keepCollider: false);
+            return band.GetComponent<Renderer>();
+        }
+
+        private static System.Collections.Generic.Dictionary<DrinkType, KegSocket> BuildCellar(Palette m, GameObject kegPrefab)
+        {
+            var sockets = new System.Collections.Generic.Dictionary<DrinkType, KegSocket>();
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            DrinkType[] lines = { DrinkType.Lager, DrinkType.Bitter, DrinkType.Cider };
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                float x = 3.7f + i * 0.8f;
+                var root = new GameObject($"KegSocket_{lines[i]}");
+                root.transform.position = new Vector3(x, 0f, 4.6f);
+                var plateCollider = root.AddComponent<BoxCollider>();
+                plateCollider.center = new Vector3(0f, 0.04f, 0f);
+                plateCollider.size = new Vector3(0.55f, 0.08f, 0.55f);
+                Primitive(PrimitiveType.Cube, "Plate", root.transform, new Vector3(0f, 0.04f, 0f), new Vector3(0.55f, 0.08f, 0.55f), m.Dark, keepCollider: false);
+                Primitive(PrimitiveType.Cube, "Pipe", root.transform, new Vector3(0f, 1.65f, 0.35f), new Vector3(0.04f, 3.2f, 0.04f), m.Metal, keepCollider: false);
+
+                // The plugged-in keg (visual + collider so you can bump into it and look at it).
+                var connected = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                connected.name = "ConnectedKeg";
+                connected.transform.SetParent(root.transform, false);
+                connected.transform.localPosition = new Vector3(0f, 0.38f, 0f);
+                connected.transform.localScale = new Vector3(0.4f, 0.3f, 0.4f);
+                connected.GetComponent<Renderer>().sharedMaterial = m.Metal;
+                var band = KegBand(connected.transform, m);
+                Primitive(PrimitiveType.Cube, "Coupler", connected.transform, new Vector3(0f, 1.05f, 0f), new Vector3(0.3f, 0.15f, 0.3f), m.Dark, keepCollider: false);
+
+                var popOut = new GameObject("PopOutPoint").transform;
+                popOut.SetParent(root.transform, false);
+                popOut.localPosition = new Vector3(0f, 0.45f, -0.6f);
+
+                // Label on the back wall.
+                var canvas = WorldCanvas($"Label", root.transform, new Vector3(0f, 1.45f, 0.38f), new Vector2(300f, 70f), 0.0025f);
+                Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+                canvas.rotation = Quaternion.identity;
+                var label = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300f, 70f));
+                label.font = font;
+                label.fontSize = 44;
+                label.fontStyle = FontStyle.Bold;
+                label.alignment = TextAnchor.MiddleCenter;
+                label.color = Color.white;
+                label.text = Drinks.Name(lines[i]).ToUpperInvariant();
+
+                root.AddComponent<NetworkObject>();
+                var socket = root.AddComponent<KegSocket>();
+                var so = new SerializedObject(socket);
+                so.FindProperty("line").intValue = (int)lines[i];
+                so.FindProperty("kegPrefab").objectReferenceValue = kegPrefab.GetComponent<NetworkObject>();
+                so.FindProperty("connectedVisual").objectReferenceValue = connected;
+                so.FindProperty("connectedBand").objectReferenceValue = band;
+                so.FindProperty("popOutPoint").objectReferenceValue = popOut;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                sockets[lines[i]] = socket;
+            }
+
+            BuildOrderBoard(m, font);
+            BuildEmptiesCage(m, font);
+
+            var supplierGo = new GameObject("KegSupplier");
+            supplierGo.AddComponent<NetworkObject>();
+            var supplier = supplierGo.AddComponent<KegSupplier>();
+            var drop = new GameObject("DeliveryPoint").transform;
+            drop.SetParent(supplierGo.transform, false);
+            drop.position = new Vector3(3.7f, 0.4f, -6.4f); // outside, just left of the front door
+            SetRef(supplier, "kegPrefab", kegPrefab.GetComponent<NetworkObject>());
+            SetRef(supplier, "deliveryPoint", drop);
+
+            return sockets;
+        }
+
+        private static void BuildOrderBoard(Palette m, Font font)
+        {
+            // On the right-hand wall of the cellar corner; text faces into the room (-X).
+            var board = new GameObject("OrderBoard").transform;
+            Primitive(PrimitiveType.Cube, "Backing", board, new Vector3(5.97f, 1.45f, 3.4f), new Vector3(0.04f, 1.0f, 1.0f), m.WoodDark, keepCollider: false);
+            var title = WorldCanvas("Title", board, new Vector3(5.94f, 1.85f, 3.4f), new Vector2(400f, 60f), 0.0022f);
+            Object.DestroyImmediate(title.GetComponent<Billboard>());
+            title.rotation = Quaternion.Euler(0f, 90f, 0f);
+            var titleText = UiElement<Text>("Text", title, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(400f, 60f));
+            titleText.font = font;
+            titleText.fontSize = 40;
+            titleText.fontStyle = FontStyle.Bold;
+            titleText.alignment = TextAnchor.MiddleCenter;
+            titleText.text = "BREWERY ORDERS";
+
+            DrinkType[] drinks = { DrinkType.Lager, DrinkType.Bitter, DrinkType.Cider };
+            for (int i = 0; i < drinks.Length; i++)
+            {
+                float y = 1.62f - i * 0.25f;
+                var button = Primitive(PrimitiveType.Cube, $"Order_{drinks[i]}", board, new Vector3(5.94f, y, 3.4f),
+                    new Vector3(0.04f, 0.2f, 0.85f), m.Ceiling, keepCollider: true);
+                var b = button.AddComponent<KegOrderButton>();
+                var so = new SerializedObject(b);
+                so.FindProperty("drink").intValue = (int)drinks[i];
+                so.ApplyModifiedPropertiesWithoutUndo();
+
+                var canvas = WorldCanvas("Label", board, new Vector3(5.915f, y, 3.4f), new Vector2(380f, 80f), 0.0022f);
+                Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+                canvas.rotation = Quaternion.Euler(0f, 90f, 0f);
+                var text = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(380f, 80f));
+                text.font = font;
+                text.fontSize = 36;
+                text.alignment = TextAnchor.MiddleCenter;
+                text.color = new Color(0.15f, 0.1f, 0.05f);
+                text.text = $"{Drinks.Name(drinks[i])} keg  {Money.Format(KegSupplier.KegPricePence(drinks[i]))}";
+            }
+        }
+
+        private static void BuildEmptiesCage(Palette m, Font font)
+        {
+            var cage = new GameObject("EmptiesCage");
+            cage.transform.position = new Vector3(5.3f, 0f, 2.3f);
+            var trigger = cage.AddComponent<BoxCollider>();
+            trigger.isTrigger = true;
+            trigger.center = new Vector3(0f, 0.5f, 0f);
+            trigger.size = new Vector3(1f, 1f, 1f);
+            cage.AddComponent<EmptiesCage>();
+
+            // Rails only (no colliders) so kegs can be rolled/dropped in from any side.
+            Primitive(PrimitiveType.Cube, "Floor", cage.transform, new Vector3(0f, 0.005f, 0f), new Vector3(1f, 0.01f, 1f), m.Hazard, keepCollider: false);
+            foreach (var (pos, size) in new[]
+                     {
+                         (new Vector3(0f, 0.5f, 0.5f), new Vector3(1f, 0.04f, 0.04f)), (new Vector3(0f, 0.5f, -0.5f), new Vector3(1f, 0.04f, 0.04f)),
+                         (new Vector3(0.5f, 0.5f, 0f), new Vector3(0.04f, 0.04f, 1f)), (new Vector3(-0.5f, 0.5f, 0f), new Vector3(0.04f, 0.04f, 1f)),
+                     })
+                Primitive(PrimitiveType.Cube, "Rail", cage.transform, pos, size, m.Metal, keepCollider: false);
+
+            var canvas = WorldCanvas("Label", cage.transform, new Vector3(0f, 1.05f, 0f), new Vector2(420f, 60f), 0.0025f);
+            var text = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(420f, 60f));
+            text.font = font;
+            text.fontSize = 36;
+            text.alignment = TextAnchor.MiddleCenter;
+            text.text = "EMPTY KEGS (£5 back)";
         }
 
         // ------------------------------------------------------------------ M3: customers + day

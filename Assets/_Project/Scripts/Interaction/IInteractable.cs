@@ -10,7 +10,10 @@ namespace BarOwner.Interaction
     /// </summary>
     public interface IInteractable
     {
-        /// <summary>Prompt shown under the crosshair, e.g. "Turn lights off". Null/empty = can't interact now.</summary>
+        /// <summary>
+        /// Prompt shown under the crosshair, e.g. "Turn lights off". Null/empty = nothing to show.
+        /// Start it with '~' for info only (shown without a key hint; pressing Interact does nothing).
+        /// </summary>
         string GetPrompt(PlayerInteractor interactor);
 
         void Interact(PlayerInteractor interactor);

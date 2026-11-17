@@ -34,5 +34,9 @@ Namespace = `BarOwner.<Domain>`. No assembly definitions yet; add them when comp
 ## Code style
 - Small single-purpose components; `[SerializeField] private` fields with sane defaults.
 - Interactions go through `IInteractable` (look-at prompt + use); held physics objects use `Grabbable`.
+  Prompts starting with `~` are info-only. Hold-to-use things implement `IHoldInteractable`.
+- Things players carry that the server creates/consumes (glasses, kegs) are runtime-spawned network
+  prefabs: "plugging in" or "serving" despawns them and moves their data into the receiver, rather than
+  teleporting owner-authoritative objects.
 - No `OnGUI` for player-facing UI; use uGUI (Canvas) for now.
 - Physics: Unity 6 names (`linearVelocity`, `linearDamping`, `angularDamping`).
