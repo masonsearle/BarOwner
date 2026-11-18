@@ -26,6 +26,11 @@ namespace BarOwner.Bar
         [SerializeField, Tooltip("The cellar coupler feeding this tap. Empty = endless beer (testing).")]
         private KegSocket keg;
 
+        [Header("Staff pouring (glass stood on the drip tray)")]
+        [SerializeField] private GameObject trayGlass;
+        [SerializeField] private Transform trayLiquid;
+        [SerializeField] private Renderer trayLiquidRenderer;
+
         [Header("Pouring")]
         [SerializeField, Tooltip("Pints per second.")] private float pourRate = 0.22f;
         [SerializeField, Tooltip("A held glass this close to the spout gets filled.")] private float heldGlassRange = 1.6f;
@@ -33,6 +38,8 @@ namespace BarOwner.Bar
         [SerializeField, Tooltip("Safety: stop pouring after this long even if nobody let go.")] private float maxPourSeconds = 20f;
 
         private readonly NetworkVariable<ulong> _pourer = new(Nobody);
+        private readonly NetworkVariable<float> _trayFill = new(0f);
+        private MaterialPropertyBlock _props;
 
         private float _pourStartedAt;
         private StaffWorker _staffPourer;
@@ -45,7 +52,9 @@ namespace BarOwner.Bar
         public override void OnNetworkSpawn()
         {
             All.Add(this);
+            _props ??= new MaterialPropertyBlock();
             _pourer.OnValueChanged += OnPourerChanged;
+            _trayFill.OnValueChanged += OnTrayFillChanged;
             ApplyVisuals();
             if (IsServer) NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
         }
@@ -54,6 +63,7 @@ namespace BarOwner.Bar
         {
             All.Remove(this);
             _pourer.OnValueChanged -= OnPourerChanged;
+            _trayFill.OnValueChanged -= OnTrayFillChanged;
             if (IsServer && NetworkManager != null) NetworkManager.OnClientDisconnectCallback -= OnClientDisconnected;
         }
 
@@ -98,6 +108,7 @@ namespace BarOwner.Bar
         {
             if (!IsServer || IsPouring || !HasBeer || staff == null) return false;
             _staffPourer = staff;
+            _trayFill.Value = 0f;
             _pourer.Value = StaffPourer;
             _pourStartedAt = Time.time;
             return true;
@@ -154,6 +165,7 @@ namespace BarOwner.Bar
             if (staffPour)
             {
                 _staffPourer.ServerAddToGlass(drink, amount);
+                _trayFill.Value = _staffPourer.GlassFill;
                 return;
             }
 
@@ -193,12 +205,35 @@ namespace BarOwner.Bar
         // ---------------------------------------------------------------- visuals (everyone)
 
         private void OnPourerChanged(ulong previous, ulong current) => ApplyVisuals();
+        private void OnTrayFillChanged(float previous, float current) => ApplyVisuals();
 
         private void ApplyVisuals()
         {
             bool pouring = IsPouring;
             if (stream != null) stream.SetActive(pouring);
             if (handle != null) handle.localRotation = Quaternion.Euler(pouring ? 35f : 0f, 0f, 0f);
+
+            // Staff stand the glass on the drip tray while it fills.
+            bool staffGlass = _pourer.Value == StaffPourer;
+            if (trayGlass != null) trayGlass.SetActive(staffGlass);
+            if (staffGlass && trayLiquid != null)
+            {
+                float height = 2f * _trayFill.Value * 0.96f;
+                bool show = height > 0.01f;
+                trayLiquid.gameObject.SetActive(show);
+                if (show)
+                {
+                    trayLiquid.localScale = new Vector3(0.86f, height * 0.5f, 0.86f);
+                    trayLiquid.localPosition = new Vector3(0f, -0.98f + height * 0.5f, 0f);
+                    if (trayLiquidRenderer != null)
+                    {
+                        _props ??= new MaterialPropertyBlock();
+                        trayLiquidRenderer.GetPropertyBlock(_props);
+                        _props.SetColor("_BaseColor", Drinks.LiquidColour(drink));
+                        trayLiquidRenderer.SetPropertyBlock(_props);
+                    }
+                }
+            }
         }
     }
 }

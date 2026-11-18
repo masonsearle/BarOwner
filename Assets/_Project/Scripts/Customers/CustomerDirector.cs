@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using BarOwner.Bar;
 using BarOwner.Day;
+using BarOwner.Decor;
 using BarOwner.Economy;
+using BarOwner.Events;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -108,6 +110,8 @@ namespace BarOwner.Customers
             // Word gets around: a 5-star pub draws customers ~2.5x as often as a 0-star dive.
             float reputation = PubLedger.Instance != null ? PubLedger.Instance.Reputation : 1f;
             float popularity = Mathf.Lerp(1.5f, 0.6f, reputation / 5f);
+            if (Atmosphere.Instance != null) popularity *= Mathf.Lerp(1f, 0.8f, Atmosphere.Instance.Normalised);
+            if (EventSchedule.Instance != null) popularity *= ThemeNights.ArrivalIntervalMultiplier(EventSchedule.Instance.Tonight);
             _nextSpawnAt = Time.time + ArrivalInterval(clock.Hour) * popularity * Random.Range(0.7f, 1.3f);
         }
 

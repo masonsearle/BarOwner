@@ -1,5 +1,7 @@
 using BarOwner.Bar;
 using BarOwner.Day;
+using BarOwner.Decor;
+using BarOwner.Events;
 using BarOwner.Economy;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -94,8 +96,12 @@ namespace BarOwner.UI
                 };
                 string day = $"{Staff.StaffNames.Weekdays[Staff.StaffNames.WeekdayOf(clock.Day)]} · Day {clock.Day}";
                 text = clock.Phase == PubPhase.Closed ? $"{day}  ·  {phase}" : $"{day}  ·  {clock.ClockText}  ·  {phase}";
+                if (EventSchedule.Instance != null && EventSchedule.Instance.Tonight != ThemeNight.None)
+                    text += $"  ·  {ThemeNights.Name(EventSchedule.Instance.Tonight).ToUpperInvariant()}";
                 if (PubLedger.Instance != null && PubLedger.Instance.IsSpawned)
                     text += $"  ·  Reputation {PubLedger.Instance.Reputation:0.0}/5";
+                if (Atmosphere.Instance != null && Atmosphere.Instance.IsSpawned)
+                    text += $"  ·  Ambience {Atmosphere.Instance.Ambience:0}/{Atmosphere.Max:0}";
             }
             if (text != _lastClock)
             {

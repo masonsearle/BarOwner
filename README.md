@@ -16,6 +16,7 @@ Design doc: [`docs/GDD.md`](docs/GDD.md).
 | Left mouse | Pick up / drop |
 | Right mouse | Throw held item |
 | Scroll | Push/pull held item |
+| Q / R | Turn held item |
 | E | Use (e.g. light switch by the door) |
 | Esc | Free the mouse (click to recapture) |
 | H / J / F8 | Host / join 127.0.0.1 / disconnect |

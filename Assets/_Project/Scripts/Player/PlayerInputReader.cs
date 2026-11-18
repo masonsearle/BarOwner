@@ -41,6 +41,19 @@ namespace BarOwner.Player
             }
         }
 
+        /// <summary>Q / R held: turn the held object left / right (-1..1). (E is Interact.)</summary>
+        public float Rotate
+        {
+            get
+            {
+                if (!GameplayActive || Keyboard.current == null) return 0f;
+                float r = 0f;
+                if (Keyboard.current.qKey.isPressed) r -= 1f;
+                if (Keyboard.current.rKey.isPressed) r += 1f;
+                return r;
+            }
+        }
+
         /// <summary>Mouse wheel in notches (+1 / -1), used to push/pull the held object.</summary>
         public float Scroll
         {

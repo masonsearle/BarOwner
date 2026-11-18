@@ -33,6 +33,7 @@ namespace BarOwner.Player
         [SerializeField] private float minHoldDistance = 0.7f;
         [SerializeField] private float maxHoldDistance = 2.2f;
         [SerializeField] private float scrollStep = 0.15f;
+        [SerializeField, Tooltip("Degrees per second when turning a held object with Q/R.")] private float turnSpeed = 120f;
         [SerializeField, Tooltip("Drop the item if it gets stuck this far from the hold point.")]
         private float breakDistance = 2.0f;
 
@@ -154,6 +155,15 @@ namespace BarOwner.Player
                 return false;
             }
 
+            float turn = _input.Rotate;
+            if (turn != 0f)
+            {
+                // Spin the item's target rotation around the world up axis.
+                Quaternion world = holdPoint.rotation * _holdRotationOffset;
+                world = Quaternion.AngleAxis(turn * turnSpeed * Time.deltaTime, Vector3.up) * world;
+                _holdRotationOffset = Quaternion.Inverse(holdPoint.rotation) * world;
+            }
+
             float scroll = _input.Scroll;
             if (scroll != 0f)
                 _holdDistance = Mathf.Clamp(_holdDistance + scroll * scrollStep, minHoldDistance, maxHoldDistance);
@@ -237,7 +247,7 @@ namespace BarOwner.Player
             }
 
             string heldName = _held.TryGetComponent(out IHeldDescription description) ? description.Describe() : _held.DisplayName;
-            string controls = "[LMB] Drop   [RMB] Throw   [Scroll] Distance";
+            string controls = "[LMB] Drop   [RMB] Throw   [Scroll] Distance   [Q/R] Turn";
             PlayerHUD.SetPrompt(look != null ? $"{look}\n<size=18>{heldName} · {controls}</size>" : $"{heldName}\n<size=18>{controls}</size>");
         }
 

@@ -2,6 +2,7 @@ using System;
 using BarOwner.Bar;
 using BarOwner.Customers;
 using BarOwner.Economy;
+using BarOwner.Events;
 using BarOwner.Staff;
 using Unity.Netcode;
 using UnityEngine;
@@ -101,6 +102,7 @@ namespace BarOwner.Day
             if (_phase.Value != PubPhase.Closed) return;
             _minutes.Value = openHour * 60f;
             PubLedger.Instance?.ServerBeginDay();
+            EventSchedule.Instance?.ServerOnDayStarted(_day.Value);
             _phase.Value = PubPhase.Open;
             StaffManager.Instance?.ServerOnDayStarted(_day.Value);
             AnnounceRpc($"Day {_day.Value}: the pub is open!", 3f);
@@ -129,6 +131,7 @@ namespace BarOwner.Day
             _phase.Value = PubPhase.Closed;
             StaffManager.Instance?.ServerOnDayEnded(); // pay wages first so they're in the report
             PubLedger.Instance?.ServerEndDay(_day.Value);
+            EventSchedule.Instance?.ServerOnDayEnded();
             _day.Value += 1;
             _minutes.Value = openHour * 60f;
             StaffManager.Instance?.ServerRollApplicants(_day.Value);

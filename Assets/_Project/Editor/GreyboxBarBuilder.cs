@@ -3,6 +3,8 @@ using System.Linq;
 using BarOwner.Bar;
 using BarOwner.Customers;
 using BarOwner.Day;
+using BarOwner.Decor;
+using BarOwner.Events;
 using BarOwner.Economy;
 using BarOwner.Interaction;
 using BarOwner.Networking;
@@ -61,8 +63,9 @@ namespace BarOwner.EditorTools
             GameObject customerPrefab = BuildCustomerPrefab(mats);
             GameObject kegPrefab = BuildKegPrefab(mats);
             GameObject staffPrefab = BuildStaffPrefab(mats);
+            GameObject[] decorPrefabs = BuildDecorPrefabs(mats);
             NetworkPrefabsList prefabList = GetOrCreatePrefabList();
-            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab, kegPrefab, staffPrefab })
+            foreach (var prefab in new[] { playerPrefab, glassPrefab, customerPrefab, kegPrefab, staffPrefab }.Concat(decorPrefabs))
             {
                 if (prefabList.Contains(prefab)) continue;
                 prefabList.Add(new NetworkPrefab { Prefab = prefab });
@@ -87,6 +90,8 @@ namespace BarOwner.EditorTools
             BuildCustomerDirector(customerPrefab, glassPrefab);
             BuildStaffManager(staffPrefab);
             BuildStaffBoard(mats);
+            BuildDecorShop(mats, decorPrefabs);
+            BuildEvents(mats, barLights);
             BuildLightSwitch(mats, barLights);
             BuildSpawnPoints();
             GameObject lobbyCamera = BuildLobbyCamera();
@@ -400,6 +405,15 @@ namespace BarOwner.EditorTools
                 stream.GetComponent<Renderer>().shadowCastingMode = ShadowCastingMode.Off;
                 stream.SetActive(false);
 
+                // Glass that appears on the drip tray when staff pour (tray top y 1.13 → glass centre 1.205).
+                var trayGlass = Primitive(PrimitiveType.Cylinder, "TrayGlass", tap.transform, new Vector3(0f, -0.265f, 0.12f),
+                    new Vector3(0.085f, 0.075f, 0.085f), m.Glass, keepCollider: false);
+                var trayLiquid = Primitive(PrimitiveType.Cylinder, "Liquid", trayGlass.transform, new Vector3(0f, -0.5f, 0f),
+                    new Vector3(0.86f, 0.5f, 0.86f), m.Liquid, keepCollider: false);
+                trayLiquid.GetComponent<Renderer>().shadowCastingMode = ShadowCastingMode.Off;
+                trayLiquid.SetActive(false);
+                trayGlass.SetActive(false);
+
                 tap.AddComponent<NetworkObject>();
                 var beerTap = tap.AddComponent<BeerTap>();
                 var so = new SerializedObject(beerTap);
@@ -407,6 +421,9 @@ namespace BarOwner.EditorTools
                 so.FindProperty("spout").objectReferenceValue = spout;
                 so.FindProperty("handle").objectReferenceValue = pivot;
                 so.FindProperty("stream").objectReferenceValue = stream;
+                so.FindProperty("trayGlass").objectReferenceValue = trayGlass;
+                so.FindProperty("trayLiquid").objectReferenceValue = trayLiquid.transform;
+                so.FindProperty("trayLiquidRenderer").objectReferenceValue = trayLiquid.GetComponent<Renderer>();
                 so.FindProperty("keg").objectReferenceValue = sockets.TryGetValue(t.drink, out var socket) ? socket : null;
                 so.ApplyModifiedPropertiesWithoutUndo();
             }
@@ -445,6 +462,157 @@ namespace BarOwner.EditorTools
             Primitive(PrimitiveType.Cube, "Screen", till.transform, new Vector3(0f, 0.75f, 0.2f), new Vector3(0.6f, 0.5f, 0.1f), m.Hazard, keepCollider: false);
             till.AddComponent<NetworkObject>();
             till.AddComponent<BarTill>();
+        }
+
+        // ------------------------------------------------------------------ M7: decor + theme nights
+
+        private static GameObject[] BuildDecorPrefabs(Palette m)
+        {
+            EnsureFolder(PrefabDir + "/Decor");
+            var result = new GameObject[DecorCatalog.All.Length];
+            foreach (var type in DecorCatalog.All)
+            {
+                var root = new GameObject(type.ToString());
+                var box = root.AddComponent<BoxCollider>();
+                float mass;
+                switch (type)
+                {
+                    case DecorType.Plant:
+                        box.center = new Vector3(0f, 0.5f, 0f); box.size = new Vector3(0.5f, 1f, 0.5f); mass = 8f;
+                        Primitive(PrimitiveType.Cylinder, "Pot", root.transform, new Vector3(0f, 0.2f, 0f), new Vector3(0.4f, 0.2f, 0.4f), m.Crate, false);
+                        Primitive(PrimitiveType.Sphere, "Leaves", root.transform, new Vector3(0f, 0.72f, 0f), new Vector3(0.65f, 0.6f, 0.65f), m.Leaves, false);
+                        break;
+                    case DecorType.FloorLamp:
+                        box.center = new Vector3(0f, 0.85f, 0f); box.size = new Vector3(0.35f, 1.7f, 0.35f); mass = 5f;
+                        Primitive(PrimitiveType.Cylinder, "Base", root.transform, new Vector3(0f, 0.03f, 0f), new Vector3(0.35f, 0.03f, 0.35f), m.Dark, false);
+                        Primitive(PrimitiveType.Cylinder, "Pole", root.transform, new Vector3(0f, 0.8f, 0f), new Vector3(0.04f, 0.78f, 0.04f), m.Metal, false);
+                        Primitive(PrimitiveType.Cylinder, "Shade", root.transform, new Vector3(0f, 1.58f, 0f), new Vector3(0.42f, 0.13f, 0.42f), m.Foam, false);
+                        var lamp = PointLight(root.transform, "Bulb", new Vector3(0f, 1.45f, 0f), 1.2f, false);
+                        lamp.range = 3.5f;
+                        break;
+                    case DecorType.Rug:
+                        box.center = new Vector3(0f, 0.015f, 0f); box.size = new Vector3(1.8f, 0.03f, 1.2f); mass = 4f;
+                        Primitive(PrimitiveType.Cube, "Rug", root.transform, new Vector3(0f, 0.015f, 0f), new Vector3(1.8f, 0.03f, 1.2f), m.Customer, false);
+                        Primitive(PrimitiveType.Cube, "Border", root.transform, new Vector3(0f, 0.016f, 0f), new Vector3(1.5f, 0.03f, 0.9f), m.Hazard, false);
+                        break;
+                    case DecorType.Jukebox:
+                        box.center = new Vector3(0f, 0.7f, 0f); box.size = new Vector3(0.7f, 1.4f, 0.5f); mass = 40f;
+                        Primitive(PrimitiveType.Cube, "Cabinet", root.transform, new Vector3(0f, 0.6f, 0f), new Vector3(0.7f, 1.2f, 0.5f), m.WoodDark, false);
+                        Primitive(PrimitiveType.Cylinder, "Top", root.transform, new Vector3(0f, 1.2f, 0f), new Vector3(0.7f, 0.25f, 0.5f), m.Customer, false)
+                            .transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                        Primitive(PrimitiveType.Cube, "Panel", root.transform, new Vector3(0f, 0.75f, -0.255f), new Vector3(0.5f, 0.5f, 0.02f), m.Hazard, false);
+                        break;
+                    case DecorType.Television:
+                        box.center = new Vector3(0f, 0.65f, 0f); box.size = new Vector3(1.1f, 1.3f, 0.45f); mass = 20f;
+                        Primitive(PrimitiveType.Cube, "Stand", root.transform, new Vector3(0f, 0.35f, 0f), new Vector3(0.7f, 0.7f, 0.42f), m.WoodDark, false);
+                        Primitive(PrimitiveType.Cube, "Screen", root.transform, new Vector3(0f, 1.0f, 0f), new Vector3(1.1f, 0.62f, 0.06f), m.Dark, false);
+                        Primitive(PrimitiveType.Cube, "Picture", root.transform, new Vector3(0f, 1.0f, -0.035f), new Vector3(1.0f, 0.54f, 0.01f), m.Pitch, false);
+                        break;
+                    case DecorType.MicStand:
+                        box.center = new Vector3(0f, 0.8f, 0f); box.size = new Vector3(0.3f, 1.6f, 0.3f); mass = 4f;
+                        Primitive(PrimitiveType.Cylinder, "Base", root.transform, new Vector3(0f, 0.02f, 0f), new Vector3(0.3f, 0.02f, 0.3f), m.Dark, false);
+                        Primitive(PrimitiveType.Cylinder, "Pole", root.transform, new Vector3(0f, 0.78f, 0f), new Vector3(0.03f, 0.75f, 0.03f), m.Metal, false);
+                        Primitive(PrimitiveType.Sphere, "Mic", root.transform, new Vector3(0f, 1.55f, -0.05f), new Vector3(0.09f, 0.09f, 0.09f), m.Dark, false);
+                        break;
+                    default: // Amplifier
+                        box.center = new Vector3(0f, 0.3f, 0f); box.size = new Vector3(0.7f, 0.6f, 0.4f); mass = 25f;
+                        Primitive(PrimitiveType.Cube, "Body", root.transform, new Vector3(0f, 0.3f, 0f), new Vector3(0.7f, 0.6f, 0.4f), m.Dark, false);
+                        Primitive(PrimitiveType.Cube, "Grille", root.transform, new Vector3(0f, 0.27f, -0.205f), new Vector3(0.6f, 0.45f, 0.01f), m.Metal, false);
+                        break;
+                }
+
+                AddNetworkPhysics(root, mass, DecorCatalog.Name(type));
+                var item = root.AddComponent<DecorItem>();
+                var so = new SerializedObject(item);
+                so.FindProperty("type").intValue = (int)type;
+                so.ApplyModifiedPropertiesWithoutUndo();
+
+                result[(int)type] = PrefabUtility.SaveAsPrefabAsset(root, $"{PrefabDir}/Decor/{type}.prefab");
+                Object.DestroyImmediate(root);
+            }
+            return result;
+        }
+
+        private static void BuildDecorShop(Palette m, GameObject[] decorPrefabs)
+        {
+            var go = new GameObject("DecorShop");
+            go.AddComponent<NetworkObject>();
+            var shop = go.AddComponent<DecorShop>();
+            var drop = new GameObject("DeliveryPoint").transform;
+            drop.SetParent(go.transform, false);
+            drop.position = new Vector3(4.6f, 0.3f, 6.3f);
+            SetRefs(shop, "prefabs", decorPrefabs.Select(p => (Object)p.GetComponent<NetworkObject>()).ToArray());
+            SetRef(shop, "deliveryPoint", drop);
+
+            // Catalogue on the office's east wall (inside face x = -0.05); text faces into the office (+X forward).
+            var board = new GameObject("FurnitureCatalogue").transform;
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var face = Quaternion.Euler(0f, 90f, 0f);
+            const float z = 8.45f;
+            Primitive(PrimitiveType.Cube, "Backing", board, new Vector3(-0.07f, 1.5f, z), new Vector3(0.03f, 1.55f, 1.25f), m.Ceiling, false);
+            OfficeText(board, "Title", new Vector3(-0.1f, 2.18f, z), face, new Vector2(520f, 60f), 38, "FURNITURE CATALOGUE", font, true);
+
+            for (int i = 0; i < DecorCatalog.All.Length; i++)
+            {
+                var type = DecorCatalog.All[i];
+                float y = 2.0f - i * 0.17f;
+                var button = Primitive(PrimitiveType.Cube, $"Buy_{type}", board, new Vector3(-0.095f, y, z), new Vector3(0.03f, 0.14f, 1.1f), m.Wood, true);
+                var b = button.AddComponent<DecorOrderButton>();
+                var so = new SerializedObject(b);
+                so.FindProperty("type").intValue = (int)type;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                OfficeText(board, $"Label_{type}", new Vector3(-0.115f, y, z), face, new Vector2(500f, 60f), 30,
+                    $"{DecorCatalog.Name(type)}   {Money.Format(DecorCatalog.PricePence(type))}", font, false);
+            }
+        }
+
+        private static void BuildEvents(Palette m, Light[] barLights)
+        {
+            var atmosphere = new GameObject("Atmosphere");
+            atmosphere.AddComponent<NetworkObject>();
+            SetRefs(atmosphere.AddComponent<Atmosphere>(), "barLights", barLights.Cast<Object>().ToArray());
+
+            var schedulerGo = new GameObject("EventSchedule");
+            schedulerGo.AddComponent<NetworkObject>();
+            SetRefs(schedulerGo.AddComponent<EventSchedule>(), "barLights", barLights.Cast<Object>().ToArray());
+
+            // Events board on the office's south wall (inside face z = 5.1); text faces into the office (-Z forward).
+            var board = new GameObject("EventsBoard").transform;
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            var face = Quaternion.Euler(0f, 180f, 0f);
+            const float x = -3.6f;
+            Primitive(PrimitiveType.Cube, "Backing", board, new Vector3(x, 1.55f, 5.115f), new Vector3(1.6f, 1.45f, 0.03f), m.Dark, false);
+            OfficeText(board, "Title", new Vector3(x, 2.15f, 5.145f), face, new Vector2(700f, 60f), 38, "THEME NIGHTS (weekly)", font, true)
+                .color = Color.white;
+
+            for (int d = 0; d < 7; d++)
+            {
+                float y = 1.98f - d * 0.15f;
+                var button = Primitive(PrimitiveType.Cube, $"Day_{d}", board, new Vector3(x, y, 5.14f), new Vector3(1.45f, 0.12f, 0.03f), m.WoodDark, true);
+                var label = OfficeText(board, $"Label_{d}", new Vector3(x, y, 5.16f), face, new Vector2(700f, 55f), 28, "", font, false);
+                label.color = Color.white;
+                label.alignment = TextAnchor.MiddleLeft;
+                var eb = button.AddComponent<EventBoardButton>();
+                var so = new SerializedObject(eb);
+                so.FindProperty("weekday").intValue = d;
+                so.FindProperty("label").objectReferenceValue = label;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        private static Text OfficeText(Transform parent, string name, Vector3 pos, Quaternion rot, Vector2 size, int fontSize, string text, Font font, bool bold)
+        {
+            var canvas = WorldCanvas(name, parent, pos, size, 0.002f);
+            Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+            canvas.rotation = rot;
+            var t = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, size);
+            t.font = font;
+            t.fontSize = fontSize;
+            t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+            t.alignment = TextAnchor.MiddleCenter;
+            t.color = new Color(0.12f, 0.08f, 0.05f);
+            t.text = text;
+            return t;
         }
 
         // ------------------------------------------------------------------ M6: staff + rota
@@ -1340,6 +1508,8 @@ namespace BarOwner.EditorTools
             public readonly Material WallBack = Make("WallBack", new Color(0.62f, 0.6f, 0.52f));
             public readonly Material Concrete = Make("Concrete", new Color(0.45f, 0.45f, 0.47f));
             public readonly Material Brick = Make("Brick", new Color(0.5f, 0.28f, 0.22f));
+            public readonly Material Leaves = Make("Leaves", new Color(0.2f, 0.5f, 0.2f));
+            public readonly Material Pitch = Make("Pitch", new Color(0.2f, 0.65f, 0.25f), smoothness: 0.8f);
             public readonly Material Player = Make("Player", new Color(0.25f, 0.5f, 0.85f));
 
             private static Material Make(string name, Color color, float smoothness = 0.2f, float metallic = 0f)

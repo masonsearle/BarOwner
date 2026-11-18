@@ -1,6 +1,8 @@
 using BarOwner.Bar;
 using BarOwner.Day;
+using BarOwner.Decor;
 using BarOwner.Economy;
+using BarOwner.Events;
 using BarOwner.Interaction;
 using BarOwner.Player;
 using BarOwner.Staff;
@@ -124,7 +126,10 @@ namespace BarOwner.Customers
             _director = director;
             _seed.Value = seed;
             var rng = new System.Random(seed);
-            _patienceRate = 1f / (patienceSeconds * (0.7f + 0.6f * (float)rng.NextDouble()));
+            // Nicer room and the right sort of night = more patient punters.
+            float ambience = Atmosphere.Instance != null ? Atmosphere.Instance.Normalised : 0f;
+            float eventPatience = ThemeNights.PatienceMultiplier(Tonight);
+            _patienceRate = 1f / (patienceSeconds * (0.7f + 0.6f * (float)rng.NextDouble()) * (1f + 0.4f * ambience) * eventPatience);
             _priceTolerance = 0.95f + 0.4f * (float)rng.NextDouble();
         }
 
@@ -181,7 +186,7 @@ namespace BarOwner.Customers
                     if (Arrived())
                     {
                         _state.Value = CustomerState.Drinking;
-                        _drinkUntil = Time.time + Random.Range(drinkSeconds.x, drinkSeconds.y);
+                        _drinkUntil = Time.time + Random.Range(drinkSeconds.x, drinkSeconds.y) * ThemeNights.DrinkTimeMultiplier(Tonight);
                     }
                     break;
 
@@ -200,7 +205,7 @@ namespace BarOwner.Customers
 
         private void BeginOrdering()
         {
-            DrinkType wants = Drinks.OnTap[Random.Range(0, Drinks.OnTap.Length)];
+            DrinkType wants = PickDrink(ThemeNights.DrinkWeights(Tonight));
             var ledger = PubLedger.Instance;
             if (ledger != null && ledger.PriceRatio(wants) > EffectiveTolerance())
             {
@@ -212,6 +217,21 @@ namespace BarOwner.Customers
 
             _state.Value = CustomerState.Ordering;
             _wants.Value = wants;
+        }
+
+        private static ThemeNight Tonight => EventSchedule.Instance != null ? EventSchedule.Instance.Tonight : ThemeNight.None;
+
+        private static DrinkType PickDrink(float[] weights)
+        {
+            float total = 0f;
+            foreach (float w in weights) total += w;
+            float roll = Random.value * total;
+            for (int i = 0; i < Drinks.OnTap.Length && i < weights.Length; i++)
+            {
+                roll -= weights[i];
+                if (roll <= 0f) return Drinks.OnTap[i];
+            }
+            return Drinks.OnTap[Drinks.OnTap.Length - 1];
         }
 
         /// <summary>A well-loved pub can charge more before people balk.</summary>
@@ -331,7 +351,8 @@ namespace BarOwner.Customers
             {
                 paid = price;
                 // Quick, full, fairly-priced pints earn tips: the happier they were, the likelier.
-                float charm = staff != null ? staff.CharmTipBonus : 0f;
+                float charm = (staff != null ? staff.CharmTipBonus : 0f) + ThemeNights.TipBonus(Tonight)
+                              + (Atmosphere.Instance != null ? Atmosphere.Instance.Normalised * 0.1f : 0f);
                 if (feelsCheap && Random.value < 0.15f + 0.35f * _patience.Value + charm)
                 {
                     tip = Mathf.Max(10, Mathf.RoundToInt(price * 0.1f / 10f) * 10);

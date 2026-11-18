@@ -1,6 +1,8 @@
 using System;
 using System.Text;
 using BarOwner.Bar;
+using BarOwner.Decor;
+using BarOwner.Events;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -29,7 +31,7 @@ namespace BarOwner.Economy
         private readonly NetworkVariable<float> _reputation = new(1f);
 
         // Today's numbers (server only; summarised in the report).
-        private int _sales, _tips, _deposits, _kegCosts, _wages, _skimmed, _openingBalance;
+        private int _sales, _tips, _deposits, _kegCosts, _wages, _skimmed, _decor, _entertainment, _openingBalance;
         private int _served, _walkouts, _pricedOut, _shortPints;
 
         public float Reputation => _reputation.Value;
@@ -92,7 +94,7 @@ namespace BarOwner.Economy
         public void ServerBeginDay()
         {
             if (!IsServer) return;
-            _sales = _tips = _deposits = _kegCosts = _wages = _skimmed = 0;
+            _sales = _tips = _deposits = _kegCosts = _wages = _skimmed = _decor = _entertainment = 0;
             _served = _walkouts = _pricedOut = _shortPints = 0;
             _openingBalance = BarTill.Instance != null ? BarTill.Instance.Pence : 0;
         }
@@ -111,6 +113,8 @@ namespace BarOwner.Economy
         public void ServerRecordDeposit(int pence) => _deposits += pence;
         public void ServerRecordWages(int pence) => _wages += pence;
         public void ServerRecordSkimmed(int pence) => _skimmed += pence;
+        public void ServerRecordDecorPurchase(int pence) => _decor += pence;
+        public void ServerRecordEntertainment(int pence) => _entertainment += pence;
 
         /// <summary>SERVER: close the books, move reputation, and show everyone the report.</summary>
         public void ServerEndDay(int day)
@@ -121,14 +125,16 @@ namespace BarOwner.Economy
             float satisfaction = customers == 0 ? 0f
                 : (_served - 2f * _walkouts - 0.5f * _pricedOut - 0.5f * _shortPints) / customers;
             float before = _reputation.Value;
-            float change = Mathf.Clamp(satisfaction * 0.5f, -0.5f, 0.5f);
+            float ambienceBonus = customers > 0 && Atmosphere.Instance != null ? Atmosphere.Instance.Normalised * 0.15f : 0f;
+            float change = Mathf.Clamp(satisfaction * 0.5f + ambienceBonus, -0.5f, 0.6f);
             _reputation.Value = Mathf.Clamp(before + change, 0f, 5f);
 
             int income = _sales + _tips + _deposits;
             int closing = BarTill.Instance != null ? BarTill.Instance.Pence : 0;
 
             var sb = new StringBuilder();
-            sb.AppendLine($"<size=40><b>DAY {day} REPORT</b></size>");
+            var tonight = EventSchedule.Instance != null ? EventSchedule.Instance.Tonight : ThemeNight.None;
+            sb.AppendLine($"<size=40><b>DAY {day} REPORT</b></size>{(tonight != ThemeNight.None ? $"   <size=26>({ThemeNights.Name(tonight)})</size>" : "")}");
             sb.AppendLine();
             sb.AppendLine($"Pints sold   {_served}{(_shortPints > 0 ? $"  ({_shortPints} short)" : "")}");
             sb.AppendLine($"Walked out   {_walkouts}");
@@ -139,11 +145,14 @@ namespace BarOwner.Economy
             if (_deposits > 0) sb.AppendLine($"Keg deposits {Money.Format(_deposits)}");
             sb.AppendLine($"Kegs bought  -{Money.Format(_kegCosts)}");
             if (_wages > 0) sb.AppendLine($"Wages        -{Money.Format(_wages)}");
+            if (_entertainment > 0) sb.AppendLine($"Entertainment -{Money.Format(_entertainment)}");
+            if (_decor > 0) sb.AppendLine($"Furniture    -{Money.Format(_decor)}");
             // Staff don't confess; the till just comes up short.
             if (_skimmed > 0) sb.AppendLine($"<color=#ff8866>Till short   -{Money.Format(_skimmed)}  (someone's light-fingered...)</color>");
-            sb.AppendLine($"<b>Profit       {Money.Format(income - _kegCosts - _wages - _skimmed)}</b>");
+            sb.AppendLine($"<b>Profit       {Money.Format(income - _kegCosts - _wages - _skimmed - _entertainment - _decor)}</b>");
             sb.AppendLine();
             sb.AppendLine($"Till         {Money.Format(_openingBalance)} -> {Money.Format(closing)}");
+            if (Atmosphere.Instance != null) sb.AppendLine($"Ambience     {Atmosphere.Instance.Ambience:0}/{Atmosphere.Max:0}");
             sb.AppendLine($"Reputation   {before:0.0} -> {_reputation.Value:0.0} / 5  ({change:+0.0;-0.0;+0.0})");
             sb.AppendLine();
             sb.Append("<size=20>Game saved. Press Enter to close.</size>");

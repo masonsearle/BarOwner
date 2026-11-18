@@ -4,7 +4,9 @@ using System.IO;
 using System.Linq;
 using BarOwner.Bar;
 using BarOwner.Day;
+using BarOwner.Decor;
 using BarOwner.Economy;
+using BarOwner.Events;
 using BarOwner.Staff;
 using Unity.Netcode;
 using UnityEngine;
@@ -86,6 +88,10 @@ namespace BarOwner.Saving
                         wagePence = h.WagePence, rota = h.Rota,
                     }).ToArray()
                     : Array.Empty<StaffSave>(),
+                eventSchedule = EventSchedule.Instance != null ? EventSchedule.Instance.PackedSchedule : 0,
+                decor = DecorItem.All.Where(d => d != null && d.IsSpawned)
+                    .Select(d => new DecorSave { type = (int)d.Type, position = d.transform.position, rotation = d.transform.rotation })
+                    .ToArray(),
                 pendingDeliveries = KegSupplier.Instance != null
                     ? KegSupplier.Instance.ServerPendingDrinks().Select(d => (int)d).ToArray()
                     : Array.Empty<int>(),
@@ -158,6 +164,11 @@ namespace BarOwner.Saving
                     Charm = (byte)h.charm, Honesty = (byte)h.honesty, WagePence = h.wagePence, Rota = (byte)h.rota,
                 }));
 
+            EventSchedule.Instance?.ServerSetPackedSchedule(data.eventSchedule);
+            if (DecorShop.Instance != null)
+                foreach (var d in data.decor ?? Array.Empty<DecorSave>())
+                    DecorShop.Instance.ServerSpawn((DecorType)d.type, d.position + Vector3.up * 0.05f, d.rotation);
+
             Debug.Log($"[SaveSystem] Loaded day {data.day}");
             DayClock.Instance?.ServerAnnounce($"Welcome back! Day {data.day} · Till {Money.Format(data.tillPence)}", 4f);
         }
@@ -176,6 +187,16 @@ namespace BarOwner.Saving
             public KegData[] kegs;
             public int[] pendingDeliveries;
             public StaffSave[] staff;
+            public int eventSchedule;
+            public DecorSave[] decor;
+        }
+
+        [Serializable]
+        private class DecorSave
+        {
+            public int type;
+            public Vector3 position;
+            public Quaternion rotation;
         }
 
         [Serializable]

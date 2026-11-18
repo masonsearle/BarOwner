@@ -56,6 +56,7 @@ namespace BarOwner.Staff
 
         public StaffData Data => _data;
         public bool GlassIsFull => _glassFill.Value >= 0.99f;
+        public float GlassFill => _glassFill.Value;
         public float PourRateMultiplier => Mathf.Lerp(0.75f, 1.4f, (_data.Speed - 1) / 4f);
         public float CharmTipBonus => 0.08f * (_data.Charm - 3);
 
@@ -160,7 +161,11 @@ namespace BarOwner.Staff
                     {
                         if (!_tap.HasBeer) { ShoutDryKeg(_order); DropTask(); break; }
                         if (_tap.IsPouring) break; // wait for whoever's using it
-                        if (_tap.ServerStartStaffPour(this)) _task = Task.Pouring;
+                        if (_tap.ServerStartStaffPour(this))
+                        {
+                            _task = Task.Pouring;
+                            _carrying.Value = false; // glass goes down on the drip tray under the spout
+                        }
                     }
                     break;
 
@@ -175,6 +180,7 @@ namespace BarOwner.Staff
                         break;
                     }
                     _pintReadyAt = Time.time;
+                    _carrying.Value = true; // pick the full pint back up off the tray
                     if (CustomerStillWaiting()) HeadToCustomerWithPint();
                     else LookForAnotherTaker();
                     break;
