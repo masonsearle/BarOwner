@@ -1,5 +1,6 @@
 using BarOwner.Interaction;
 using BarOwner.Player;
+using BarOwner.Staff;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -13,6 +14,10 @@ namespace BarOwner.Bar
     public class BeerTap : NetworkBehaviour, IHoldInteractable
     {
         private const ulong Nobody = ulong.MaxValue;
+        private const ulong StaffPourer = ulong.MaxValue - 1;
+
+        /// <summary>Every spawned tap (staff look up the one for a drink).</summary>
+        public static readonly System.Collections.Generic.List<BeerTap> All = new();
 
         [SerializeField] private DrinkType drink = DrinkType.Lager;
         [SerializeField] private Transform spout;
@@ -30,13 +35,16 @@ namespace BarOwner.Bar
         private readonly NetworkVariable<ulong> _pourer = new(Nobody);
 
         private float _pourStartedAt;
+        private StaffWorker _staffPourer;
         private float _spilt; // server-side running total; becomes "waste" in the M5 end-of-day report
 
         public DrinkType Drink => drink;
         public bool IsPouring => _pourer.Value != Nobody;
+        public bool HasBeer => keg == null || keg.HasBeer;
 
         public override void OnNetworkSpawn()
         {
+            All.Add(this);
             _pourer.OnValueChanged += OnPourerChanged;
             ApplyVisuals();
             if (IsServer) NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
@@ -44,6 +52,7 @@ namespace BarOwner.Bar
 
         public override void OnNetworkDespawn()
         {
+            All.Remove(this);
             _pourer.OnValueChanged -= OnPourerChanged;
             if (IsServer && NetworkManager != null) NetworkManager.OnClientDisconnectCallback -= OnClientDisconnected;
         }
@@ -56,6 +65,7 @@ namespace BarOwner.Bar
             string name = Drinks.Name(drink);
             if (keg != null && !keg.IsConnected) return $"~{name}: no keg connected. Plug one in down in the cellar";
             if (keg != null && !keg.HasBeer) return $"~{name}: *sputter* The keg's empty. Change it in the cellar";
+            if (_pourer.Value == StaffPourer) return $"~{name} (staff are pouring)";
             if (IsPouring && _pourer.Value != NetworkManager.LocalClientId) return $"~{name} (someone's pouring)";
             string price = Economy.PubLedger.Instance != null ? Money.Format(Economy.PubLedger.Instance.PricePence(drink)) : "";
             string left = keg != null ? $"   ({price} · {Mathf.FloorToInt(keg.Pints)} pints left)" : "";
@@ -83,6 +93,25 @@ namespace BarOwner.Bar
             if (_pourer.Value == rpcParams.Receive.SenderClientId) _pourer.Value = Nobody;
         }
 
+        /// <summary>SERVER: a member of staff pulls this tap into the glass in their hand. False if busy/dry.</summary>
+        public bool ServerStartStaffPour(StaffWorker staff)
+        {
+            if (!IsServer || IsPouring || !HasBeer || staff == null) return false;
+            _staffPourer = staff;
+            _pourer.Value = StaffPourer;
+            _pourStartedAt = Time.time;
+            return true;
+        }
+
+        public void ServerStopStaffPour(StaffWorker staff)
+        {
+            if (!IsServer || _staffPourer != staff || _pourer.Value != StaffPourer) return;
+            _staffPourer = null;
+            _pourer.Value = Nobody;
+        }
+
+        public bool IsStaffPouringFor(StaffWorker staff) => _pourer.Value == StaffPourer && _staffPourer == staff;
+
         private void OnClientDisconnected(ulong clientId)
         {
             if (_pourer.Value == clientId) _pourer.Value = Nobody;
@@ -99,14 +128,33 @@ namespace BarOwner.Bar
             }
 
             float amount = pourRate * Time.deltaTime;
+            bool staffPour = _pourer.Value == StaffPourer;
+            if (staffPour)
+            {
+                if (_staffPourer == null || !_staffPourer.IsSpawned || _staffPourer.GlassIsFull)
+                {
+                    _staffPourer = null;
+                    _pourer.Value = Nobody;
+                    return;
+                }
+                amount *= _staffPourer.PourRateMultiplier;
+            }
+
             if (keg != null)
             {
                 amount = keg.ServerDrain(amount);
                 if (amount <= 0f)
                 {
+                    _staffPourer = null;
                     _pourer.Value = Nobody; // ran dry mid-pour
                     return;
                 }
+            }
+
+            if (staffPour)
+            {
+                _staffPourer.ServerAddToGlass(drink, amount);
+                return;
             }
 
             PintGlass target = FindTarget(_pourer.Value);

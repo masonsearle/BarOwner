@@ -10,7 +10,6 @@ using BarOwner.Player;
 using BarOwner.Saving;
 using BarOwner.Staff;
 using BarOwner.UI;
-using Unity.AI.Navigation;
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using Unity.Netcode.Transports.UTP;
@@ -168,17 +167,16 @@ namespace BarOwner.EditorTools
 
         private static Light[] BuildRoom(Palette m)
         {
+            // Everything structural lives under "Room": the server builds the NavMesh from these colliders.
             var room = new GameObject("Room").transform;
-
-            // Customers path on a NavMesh built at runtime (server only) from the room's colliders.
-            var surface = room.gameObject.AddComponent<NavMeshSurface>();
-            surface.collectObjects = CollectObjects.Children;
-            surface.useGeometry = NavMeshCollectGeometry.PhysicsColliders;
 
             // Shell: 12m x 10m, 3.2m high. Origin = floor centre. Bar along the back (+Z) wall.
             Block("Floor", room, new Vector3(0f, -0.05f, 0f), new Vector3(12f, 0.1f, 10f), m.Floor);
             Block("Ceiling", room, new Vector3(0f, 3.25f, 0f), new Vector3(12f, 0.1f, 10f), m.Ceiling);
-            Block("Wall_Back", room, new Vector3(0f, 1.6f, 5.05f), new Vector3(12.2f, 3.2f, 0.1f), m.Wall);
+            // Back wall with a staff door (x 3.9 to 5.1) through to the back corridor.
+            Block("Wall_Back_A", room, new Vector3(-1.1f, 1.6f, 5.05f), new Vector3(10f, 3.2f, 0.1f), m.Wall);
+            Block("Wall_Back_B", room, new Vector3(5.6f, 1.6f, 5.05f), new Vector3(1f, 3.2f, 0.1f), m.Wall);
+            Block("Wall_Back_Lintel", room, new Vector3(4.5f, 2.75f, 5.05f), new Vector3(1.2f, 0.9f, 0.1f), m.Wall);
             Block("Wall_Left", room, new Vector3(-6.05f, 1.6f, 0f), new Vector3(0.1f, 3.2f, 10f), m.Wall);
             Block("Wall_Right", room, new Vector3(6.05f, 1.6f, 0f), new Vector3(0.1f, 3.2f, 10f), m.Wall);
             // Front wall with a doorway between x = 4.0 and 5.4.
@@ -208,8 +206,7 @@ namespace BarOwner.EditorTools
                 Block("Foot", t, new Vector3(0f, 0.02f, 0f), new Vector3(0.6f, 0.04f, 0.6f), m.WoodDark);
             }
 
-            // Keg store corner marker (the cellar comes in M4).
-            Block("KegStore_Floor", room, new Vector3(4.5f, 0.005f, 4f), new Vector3(2.4f, 0.01f, 1.6f), m.Hazard);
+            BuildBackRooms(room, m);
 
             // Warm bar lighting.
             var lights = new[]
@@ -217,9 +214,89 @@ namespace BarOwner.EditorTools
                 PointLight(room, "Light_Bar", new Vector3(-1f, 2.9f, 3.5f), 3.2f, true),
                 PointLight(room, "Light_Floor_A", new Vector3(-3f, 2.9f, -1.5f), 2.6f, false),
                 PointLight(room, "Light_Floor_B", new Vector3(2.5f, 2.9f, -1.5f), 2.6f, false),
-                PointLight(room, "Light_KegStore", new Vector3(4.5f, 2.9f, 3.5f), 1.6f, false),
+                PointLight(room, "Light_BehindBar", new Vector3(4f, 2.9f, 3.8f), 1.6f, false),
             };
             return lights;
+        }
+
+        /// <summary>
+        /// Staff-only areas behind the bar: a back corridor (deliveries arrive at its back door),
+        /// the manager's office (staff noticeboard, brewery orders) and a ramp down to the cellar
+        /// (keg couplers, spare kegs, empties). Kegs can be rolled down the ramp.
+        /// </summary>
+        private static void BuildBackRooms(Transform room, Palette m)
+        {
+            var back = new GameObject("BackRooms").transform;
+            back.SetParent(room, false);
+
+            // --- Back corridor: x 0..6, z 5.1..7.5
+            Block("Corridor_Floor", back, new Vector3(3f, -0.05f, 6.3f), new Vector3(6f, 0.1f, 2.4f), m.Floor);
+            Block("Corridor_Ceiling", back, new Vector3(3f, 3.25f, 6.3f), new Vector3(6f, 0.1f, 2.4f), m.Ceiling);
+            Block("Corridor_Wall_East", back, new Vector3(6.05f, 1.6f, 6.3f), new Vector3(0.1f, 3.2f, 2.5f), m.WallBack);
+            Block("Corridor_Wall_North_A", back, new Vector3(1.675f, 1.6f, 7.55f), new Vector3(3.35f, 3.2f, 0.1f), m.WallBack);
+            Block("Corridor_Wall_North_B", back, new Vector3(5.875f, 1.6f, 7.55f), new Vector3(0.45f, 3.2f, 0.1f), m.WallBack);
+            Primitive(PrimitiveType.Cube, "BackDoor", back, new Vector3(5.99f, 1.1f, 6.3f), new Vector3(0.04f, 2.2f, 1.0f), m.WoodDark, keepCollider: false);
+
+            // --- Office: x -6..0, z 5.1..10, door from the corridor at z 5.7..6.8
+            Block("Office_Floor", back, new Vector3(-3f, -0.05f, 7.55f), new Vector3(6f, 0.1f, 4.9f), m.Wood);
+            Block("Office_Ceiling", back, new Vector3(-3f, 3.25f, 7.55f), new Vector3(6f, 0.1f, 4.9f), m.Ceiling);
+            Block("Office_Wall_West", back, new Vector3(-6.05f, 1.6f, 7.55f), new Vector3(0.1f, 3.2f, 4.9f), m.WallBack);
+            Block("Office_Wall_North", back, new Vector3(-3f, 1.6f, 10.05f), new Vector3(6.2f, 3.2f, 0.1f), m.WallBack);
+            Block("Office_Wall_East_A", back, new Vector3(0f, 1.6f, 5.4f), new Vector3(0.1f, 3.2f, 0.6f), m.WallBack);
+            Block("Office_Wall_East_B", back, new Vector3(0f, 1.6f, 8.4f), new Vector3(0.1f, 3.2f, 3.2f), m.WallBack);
+            Block("Office_Wall_East_Lintel", back, new Vector3(0f, 2.75f, 6.25f), new Vector3(0.1f, 0.9f, 1.1f), m.WallBack);
+            Block("Desk", back, new Vector3(-2.6f, 0.38f, 8.6f), new Vector3(1.6f, 0.76f, 0.8f), m.WoodDark);
+            Block("Chair", back, new Vector3(-2.6f, 0.25f, 7.9f), new Vector3(0.5f, 0.5f, 0.5f), m.Dark);
+            Primitive(PrimitiveType.Cube, "Monitor", back, new Vector3(-2.6f, 0.98f, 8.8f), new Vector3(0.5f, 0.32f, 0.05f), m.Dark, keepCollider: false);
+            Block("Safe", back, new Vector3(-0.6f, 0.35f, 9.55f), new Vector3(0.6f, 0.7f, 0.6f), m.Metal);
+
+            // --- Stairwell: ramp from the corridor (z 7.5, y 0) down to the cellar (z 12.5, y -3)
+            float angle = Mathf.Atan2(3f, 5f) * Mathf.Rad2Deg;
+            Vector3 normal = Quaternion.Euler(angle, 0f, 0f) * Vector3.up;
+            var ramp = Block("Ramp", back, new Vector3(4.5f, -1.5f, 10f) - normal * 0.1f, new Vector3(2.2f, 0.2f, 5.9f), m.WoodDark);
+            ramp.transform.localRotation = Quaternion.Euler(angle, 0f, 0f);
+            Block("Stair_Wall_West", back, new Vector3(3.35f, 0.1f, 10f), new Vector3(0.1f, 6.2f, 5f), m.WallBack);
+            Block("Stair_Wall_East", back, new Vector3(5.65f, 0.1f, 10f), new Vector3(0.1f, 6.2f, 5f), m.WallBack);
+            Block("Stair_Ceiling", back, new Vector3(4.5f, 3.25f, 10f), new Vector3(2.4f, 0.1f, 5f), m.Ceiling);
+            Block("Stair_EndWall", back, new Vector3(4.5f, 1.4f, 12.55f), new Vector3(2.4f, 3.6f, 0.1f), m.WallBack);
+
+            // --- Cellar: x 0..6, z 12.5..17.5, floor at y -3
+            Block("Cellar_Floor", back, new Vector3(3f, -3.05f, 15f), new Vector3(6f, 0.1f, 5f), m.Concrete);
+            Block("Cellar_Ceiling", back, new Vector3(3f, -0.35f, 15f), new Vector3(6.2f, 0.1f, 5.2f), m.Ceiling);
+            Block("Cellar_Wall_West", back, new Vector3(-0.05f, -1.7f, 15f), new Vector3(0.1f, 2.6f, 5f), m.Brick);
+            Block("Cellar_Wall_East", back, new Vector3(6.05f, -1.7f, 15f), new Vector3(0.1f, 2.6f, 5f), m.Brick);
+            Block("Cellar_Wall_North", back, new Vector3(3f, -1.7f, 17.55f), new Vector3(6.2f, 2.6f, 0.1f), m.Brick);
+            Block("Cellar_Wall_South_A", back, new Vector3(1.675f, -1.7f, 12.45f), new Vector3(3.35f, 2.6f, 0.1f), m.Brick);
+            Block("Cellar_Wall_South_B", back, new Vector3(5.85f, -1.7f, 12.45f), new Vector3(0.4f, 2.6f, 0.1f), m.Brick);
+
+            PointLight(back, "Light_Corridor", new Vector3(3f, 2.9f, 6.3f), 1.5f, false);
+            PointLight(back, "Light_Office", new Vector3(-3f, 2.9f, 7.5f), 2f, false);
+            PointLight(back, "Light_Stairs", new Vector3(4.5f, 2.6f, 9f), 1.2f, false);
+            var cellarA = PointLight(back, "Light_Cellar_A", new Vector3(1.5f, -0.7f, 15f), 1.6f, true);
+            var cellarB = PointLight(back, "Light_Cellar_B", new Vector3(4.5f, -0.7f, 15.5f), 1.4f, false);
+            cellarA.color = cellarB.color = new Color(0.85f, 0.9f, 1f); // cold cellar light
+
+            // Signs.
+            Sign(back, "STAFF ONLY", new Vector3(4.5f, 2.55f, 4.99f), Quaternion.identity, 0.003f);
+            Sign(back, "OFFICE", new Vector3(0.06f, 2.55f, 6.25f), Quaternion.Euler(0f, -90f, 0f), 0.003f);
+            Sign(back, "CELLAR", new Vector3(4.5f, 2.6f, 7.49f), Quaternion.identity, 0.003f);
+            Sign(back, "DELIVERIES", new Vector3(5.98f, 2.45f, 6.3f), Quaternion.Euler(0f, 90f, 0f), 0.0025f);
+        }
+
+        private static void Sign(Transform parent, string text, Vector3 position, Quaternion rotation, float scale)
+        {
+            var canvas = WorldCanvas($"Sign_{text}", parent, position, new Vector2(400f, 70f), scale);
+            Object.DestroyImmediate(canvas.GetComponent<Billboard>());
+            canvas.rotation = rotation;
+            var bg = UiElement<Image>("Background", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(400f, 70f));
+            bg.color = new Color(0.1f, 0.25f, 0.15f, 0.95f);
+            var t = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(400f, 70f));
+            t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            t.fontSize = 46;
+            t.fontStyle = FontStyle.Bold;
+            t.alignment = TextAnchor.MiddleCenter;
+            t.color = Color.white;
+            t.text = text;
         }
 
         private static void BuildProps(Palette m, GameObject glassPrefab, GameObject kegPrefab)
@@ -243,7 +320,7 @@ namespace BarOwner.EditorTools
             for (int i = 0; i < spares.Length; i++)
             {
                 var keg = (GameObject)PrefabUtility.InstantiatePrefab(kegPrefab);
-                keg.transform.position = new Vector3(3.9f + i * 0.6f, 0.31f, 3.55f);
+                keg.transform.position = new Vector3(1.0f + i * 0.6f, -2.69f, 15.6f);
                 var so = new SerializedObject(keg.GetComponent<Keg>());
                 so.FindProperty("startingDrink").intValue = (int)spares[i];
                 so.ApplyModifiedPropertiesWithoutUndo();
@@ -401,6 +478,10 @@ namespace BarOwner.EditorTools
             Primitive(PrimitiveType.Cube, "Eyes", root.transform, new Vector3(0f, 1.82f, 0.15f), new Vector3(0.18f, 0.04f, 0.04f), m.Dark, keepCollider: false);
             var glass = Primitive(PrimitiveType.Cylinder, "CarriedGlass", root.transform, new Vector3(0.32f, 1.05f, 0.2f),
                 new Vector3(0.085f, 0.075f, 0.085f), m.Glass, keepCollider: false);
+            var liquid = Primitive(PrimitiveType.Cylinder, "Liquid", glass.transform, new Vector3(0f, -0.5f, 0f),
+                new Vector3(0.86f, 0.5f, 0.86f), m.Liquid, keepCollider: false);
+            liquid.GetComponent<Renderer>().shadowCastingMode = ShadowCastingMode.Off;
+            liquid.SetActive(false);
             glass.SetActive(false);
 
             Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -426,6 +507,8 @@ namespace BarOwner.EditorTools
             SetRef(worker, "nameTag", nameTag);
             SetRef(worker, "statusText", status);
             SetRef(worker, "carriedGlass", glass);
+            SetRef(worker, "carriedLiquid", liquid.transform);
+            SetRef(worker, "carriedLiquidRenderer", liquid.GetComponent<Renderer>());
 
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, StaffPrefabPath);
             Object.DestroyImmediate(root);
@@ -458,11 +541,12 @@ namespace BarOwner.EditorTools
 
         private static void BuildStaffBoard(Palette m)
         {
-            // Noticeboard on the left wall (x = -6), readable from inside (text faces +X).
+            // Noticeboard on the office's west wall (x = -6), readable from inside (text faces +X).
             const float wallX = -5.97f;
+            const float Dz = 9.5f; // board centre z = 7.5 on the office's west wall
             var board = new GameObject("StaffBoard").transform;
-            Primitive(PrimitiveType.Cube, "Cork", board, new Vector3(wallX, 1.68f, -2.0f), new Vector3(0.03f, 1.45f, 2.9f), m.Crate, keepCollider: false);
-            Primitive(PrimitiveType.Cube, "Frame", board, new Vector3(wallX - 0.01f, 1.68f, -2.0f), new Vector3(0.02f, 1.52f, 2.98f), m.WoodDark, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Cork", board, new Vector3(wallX, 1.68f, -2.0f + Dz), new Vector3(0.03f, 1.45f, 2.9f), m.Crate, keepCollider: false);
+            Primitive(PrimitiveType.Cube, "Frame", board, new Vector3(wallX - 0.01f, 1.68f, -2.0f + Dz), new Vector3(0.02f, 1.52f, 2.98f), m.WoodDark, keepCollider: false);
             Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             var faceRoom = Quaternion.Euler(0f, -90f, 0f);
 
@@ -508,9 +592,9 @@ namespace BarOwner.EditorTools
             }
 
             var dark = new Color(0.12f, 0.08f, 0.05f);
-            BoardText("Title", 2.27f, -2.0f, new Vector2(1200f, 60f), 44, TextAnchor.MiddleCenter, dark).text = "STAFF NOTICEBOARD";
-            BoardText("ApplicantsHeader", 2.12f, -2.9f, new Vector2(500f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "WANTED: BAR STAFF (applicants today)";
-            BoardText("StaffHeader", 2.12f, -1.25f, new Vector2(560f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "YOUR STAFF & ROTA";
+            BoardText("Title", 2.27f, -2.0f + Dz, new Vector2(1200f, 60f), 44, TextAnchor.MiddleCenter, dark).text = "STAFF NOTICEBOARD";
+            BoardText("ApplicantsHeader", 2.12f, -2.9f + Dz, new Vector2(500f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "WANTED: BAR STAFF (applicants today)";
+            BoardText("StaffHeader", 2.12f, -1.25f + Dz, new Vector2(560f, 40f), 28, TextAnchor.MiddleLeft, dark).text = "YOUR STAFF & ROTA";
 
             var applicantTexts = new Text[StaffManager.ApplicantsPerDay];
             var hireButtons = new GameObject[StaffManager.ApplicantsPerDay];
@@ -522,21 +606,21 @@ namespace BarOwner.EditorTools
             for (int i = 0; i < StaffManager.ApplicantsPerDay; i++)
             {
                 float y = 1.88f - i * 0.38f;
-                applicantTexts[i] = BoardText($"Applicant_{i}", y, -3.0f, new Vector2(330f, 120f), 26, TextAnchor.MiddleLeft, dark);
-                hireButtons[i] = Button($"Hire_{i}", y, -2.42f, new Vector3(0.03f, 0.12f, 0.24f), m.HandleCider, StaffButton.Kind.Hire, i, 0, "HIRE");
+                applicantTexts[i] = BoardText($"Applicant_{i}", y, -3.0f + Dz, new Vector2(330f, 120f), 26, TextAnchor.MiddleLeft, dark);
+                hireButtons[i] = Button($"Hire_{i}", y, -2.42f + Dz, new Vector3(0.03f, 0.12f, 0.24f), m.HandleCider, StaffButton.Kind.Hire, i, 0, "HIRE");
             }
 
             for (int d = 0; d < 7; d++)
-                headers[d] = BoardText($"Day_{d}", 2.0f, -1.42f + d * 0.09f, new Vector2(60f, 40f), 24, TextAnchor.MiddleCenter, dark);
+                headers[d] = BoardText($"Day_{d}", 2.0f, -1.42f + Dz + d * 0.09f, new Vector2(60f, 40f), 24, TextAnchor.MiddleCenter, dark);
 
             for (int r = 0; r < StaffManager.MaxStaff; r++)
             {
                 float y = 1.85f - r * 0.38f;
-                staffTexts[r] = BoardText($"Staff_{r}", y, -1.86f, new Vector2(260f, 110f), 24, TextAnchor.MiddleLeft, dark);
+                staffTexts[r] = BoardText($"Staff_{r}", y, -1.86f + Dz, new Vector2(260f, 110f), 24, TextAnchor.MiddleLeft, dark);
                 for (int d = 0; d < 7; d++)
-                    rota[r * 7 + d] = Button($"Rota_{r}_{d}", y, -1.42f + d * 0.09f, new Vector3(0.03f, 0.08f, 0.075f), m.Liquid, StaffButton.Kind.Rota, r, d, null)
+                    rota[r * 7 + d] = Button($"Rota_{r}_{d}", y, -1.42f + Dz + d * 0.09f, new Vector3(0.03f, 0.08f, 0.075f), m.Liquid, StaffButton.Kind.Rota, r, d, null)
                         .GetComponent<Renderer>();
-                fireButtons[r] = Button($"Fire_{r}", y, -0.72f, new Vector3(0.03f, 0.1f, 0.2f), m.Customer, StaffButton.Kind.Fire, r, 0, "FIRE");
+                fireButtons[r] = Button($"Fire_{r}", y, -0.72f + Dz, new Vector3(0.03f, 0.1f, 0.2f), m.Customer, StaffButton.Kind.Fire, r, 0, "FIRE");
             }
 
             var staffBoard = board.gameObject.AddComponent<StaffBoard>();
@@ -586,14 +670,14 @@ namespace BarOwner.EditorTools
 
             for (int i = 0; i < lines.Length; i++)
             {
-                float x = 3.7f + i * 0.8f;
+                float x = 1.5f + i * 1.5f;
                 var root = new GameObject($"KegSocket_{lines[i]}");
-                root.transform.position = new Vector3(x, 0f, 4.6f);
+                root.transform.position = new Vector3(x, -3f, 17.0f);
                 var plateCollider = root.AddComponent<BoxCollider>();
                 plateCollider.center = new Vector3(0f, 0.04f, 0f);
                 plateCollider.size = new Vector3(0.55f, 0.08f, 0.55f);
                 Primitive(PrimitiveType.Cube, "Plate", root.transform, new Vector3(0f, 0.04f, 0f), new Vector3(0.55f, 0.08f, 0.55f), m.Dark, keepCollider: false);
-                Primitive(PrimitiveType.Cube, "Pipe", root.transform, new Vector3(0f, 1.65f, 0.35f), new Vector3(0.04f, 3.2f, 0.04f), m.Metal, keepCollider: false);
+                Primitive(PrimitiveType.Cube, "Pipe", root.transform, new Vector3(0f, 1.6f, 0.35f), new Vector3(0.04f, 2.0f, 0.04f), m.Metal, keepCollider: false);
 
                 // The plugged-in keg (visual + collider so you can bump into it and look at it).
                 var connected = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
@@ -641,7 +725,7 @@ namespace BarOwner.EditorTools
             var supplier = supplierGo.AddComponent<KegSupplier>();
             var drop = new GameObject("DeliveryPoint").transform;
             drop.SetParent(supplierGo.transform, false);
-            drop.position = new Vector3(3.7f, 0.4f, -6.4f); // outside, just left of the front door
+            drop.position = new Vector3(5.2f, 0.4f, 6.3f); // dropped inside the back door, top of the cellar ramp
             SetRef(supplier, "kegPrefab", kegPrefab.GetComponent<NetworkObject>());
             SetRef(supplier, "deliveryPoint", drop);
 
@@ -650,12 +734,13 @@ namespace BarOwner.EditorTools
 
         private static void BuildOrderBoard(Palette m, Font font)
         {
-            // On the right-hand wall of the cellar corner; text faces into the room (-X).
+            // Office north wall (z = 10); text faces into the office (+Z forward, read looking north).
+            const float x = -4.6f, wallZ = 9.97f;
             var board = new GameObject("OrderBoard").transform;
-            Primitive(PrimitiveType.Cube, "Backing", board, new Vector3(5.97f, 1.45f, 3.4f), new Vector3(0.04f, 1.0f, 1.0f), m.WoodDark, keepCollider: false);
-            var title = WorldCanvas("Title", board, new Vector3(5.94f, 1.85f, 3.4f), new Vector2(400f, 60f), 0.0022f);
+            Primitive(PrimitiveType.Cube, "Backing", board, new Vector3(x, 1.45f, wallZ), new Vector3(1.0f, 1.0f, 0.04f), m.WoodDark, keepCollider: false);
+            var title = WorldCanvas("Title", board, new Vector3(x, 1.85f, wallZ - 0.03f), new Vector2(400f, 60f), 0.0022f);
             Object.DestroyImmediate(title.GetComponent<Billboard>());
-            title.rotation = Quaternion.Euler(0f, 90f, 0f);
+            title.rotation = Quaternion.identity;
             var titleText = UiElement<Text>("Text", title, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(400f, 60f));
             titleText.font = font;
             titleText.fontSize = 40;
@@ -667,16 +752,16 @@ namespace BarOwner.EditorTools
             for (int i = 0; i < drinks.Length; i++)
             {
                 float y = 1.62f - i * 0.25f;
-                var button = Primitive(PrimitiveType.Cube, $"Order_{drinks[i]}", board, new Vector3(5.94f, y, 3.4f),
-                    new Vector3(0.04f, 0.2f, 0.85f), m.Ceiling, keepCollider: true);
+                var button = Primitive(PrimitiveType.Cube, $"Order_{drinks[i]}", board, new Vector3(x, y, wallZ - 0.03f),
+                    new Vector3(0.85f, 0.2f, 0.04f), m.Ceiling, keepCollider: true);
                 var b = button.AddComponent<KegOrderButton>();
                 var so = new SerializedObject(b);
                 so.FindProperty("drink").intValue = (int)drinks[i];
                 so.ApplyModifiedPropertiesWithoutUndo();
 
-                var canvas = WorldCanvas("Label", board, new Vector3(5.915f, y, 3.4f), new Vector2(380f, 80f), 0.0022f);
+                var canvas = WorldCanvas("Label", board, new Vector3(x, y, wallZ - 0.055f), new Vector2(380f, 80f), 0.0022f);
                 Object.DestroyImmediate(canvas.GetComponent<Billboard>());
-                canvas.rotation = Quaternion.Euler(0f, 90f, 0f);
+                canvas.rotation = Quaternion.identity;
                 var text = UiElement<Text>("Text", canvas, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(380f, 80f));
                 text.font = font;
                 text.fontSize = 36;
@@ -689,7 +774,7 @@ namespace BarOwner.EditorTools
         private static void BuildEmptiesCage(Palette m, Font font)
         {
             var cage = new GameObject("EmptiesCage");
-            cage.transform.position = new Vector3(5.3f, 0f, 2.3f);
+            cage.transform.position = new Vector3(0.9f, -3f, 13.5f);
             var trigger = cage.AddComponent<BoxCollider>();
             trigger.isTrigger = true;
             trigger.center = new Vector3(0f, 0.5f, 0f);
@@ -935,7 +1020,7 @@ namespace BarOwner.EditorTools
             var so = new SerializedObject(director);
             so.FindProperty("customerPrefab").objectReferenceValue = customerPrefab.GetComponent<NetworkObject>();
             so.FindProperty("glassPrefab").objectReferenceValue = glassPrefab.GetComponent<NetworkObject>();
-            so.FindProperty("navMeshSurface").objectReferenceValue = Object.FindFirstObjectByType<NavMeshSurface>();
+            so.FindProperty("navMeshRoot").objectReferenceValue = GameObject.Find("Room").transform;
             so.FindProperty("entrance").objectReferenceValue = entrance;
             so.FindProperty("exit").objectReferenceValue = exit;
             so.FindProperty("standingArea").objectReferenceValue = standing;
@@ -1252,6 +1337,9 @@ namespace BarOwner.EditorTools
             public readonly Material StreamCider = Make("Stream_Cider", Drinks.LiquidColour(DrinkType.Cider), smoothness: 0.8f);
             public readonly Material Customer = Make("Customer", new Color(0.75f, 0.3f, 0.25f));
             public readonly Material Skin = Make("Skin", new Color(0.93f, 0.75f, 0.6f));
+            public readonly Material WallBack = Make("WallBack", new Color(0.62f, 0.6f, 0.52f));
+            public readonly Material Concrete = Make("Concrete", new Color(0.45f, 0.45f, 0.47f));
+            public readonly Material Brick = Make("Brick", new Color(0.5f, 0.28f, 0.22f));
             public readonly Material Player = Make("Player", new Color(0.25f, 0.5f, 0.85f));
 
             private static Material Make(string name, Color color, float smoothness = 0.2f, float metallic = 0f)

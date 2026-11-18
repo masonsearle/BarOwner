@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using BarOwner.Bar;
 using BarOwner.Day;
 using BarOwner.Economy;
-using Unity.AI.Navigation;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace BarOwner.Customers
 {
@@ -22,7 +22,10 @@ namespace BarOwner.Customers
         [SerializeField] private NetworkObject glassPrefab;
 
         [Header("Places")]
-        [SerializeField] private NavMeshSurface navMeshSurface;
+        [SerializeField, Tooltip("Root of the building's colliders; the NavMesh is built from everything under it.")]
+        private Transform navMeshRoot;
+        [SerializeField, Tooltip("Smaller than Unity's default 0.5 so staff fit down the walkway behind the bar.")]
+        private float navAgentRadius = 0.22f;
         [SerializeField] private Transform entrance;
         [SerializeField] private Transform exit;
         [SerializeField] private Transform standingArea;
@@ -42,6 +45,7 @@ namespace BarOwner.Customers
         private Customer[] _seatOccupants;
         private float _nextSpawnAt;
         private bool _wasAccepting;
+        private NavMeshDataInstance _navMesh;
 
         public int ActiveCustomers => _active.Count;
         public Vector3 ExitPosition => exit != null ? exit.position : transform.position;
@@ -53,13 +57,40 @@ namespace BarOwner.Customers
 
             _barOccupants = new Customer[barSpots.Length];
             _seatOccupants = new Customer[seats.Length];
-            if (navMeshSurface != null) navMeshSurface.BuildNavMesh();
-            else Debug.LogError("[CustomerDirector] No NavMeshSurface assigned; customers can't walk.");
+            BuildNavMesh();
         }
 
         public override void OnNetworkDespawn()
         {
             if (Instance == this) Instance = null;
+            if (_navMesh.valid) NavMesh.RemoveNavMeshData(_navMesh);
+        }
+
+        /// <summary>
+        /// Builds the walkable area at runtime from the building's colliders, with a slim agent radius
+        /// so the narrow walkway behind the bar (and the cellar ramp) are walkable.
+        /// </summary>
+        private void BuildNavMesh()
+        {
+            if (navMeshRoot == null)
+            {
+                Debug.LogError("[CustomerDirector] No navMeshRoot assigned; customers and staff can't walk.");
+                return;
+            }
+
+            NavMeshBuildSettings settings = NavMesh.GetSettingsByID(0);
+            settings.agentRadius = navAgentRadius;
+            settings.agentHeight = 1.8f;
+            settings.agentClimb = 0.3f;
+            settings.agentSlope = 40f;
+
+            var sources = new List<NavMeshBuildSource>();
+            NavMeshBuilder.CollectSources(navMeshRoot, ~0, NavMeshCollectGeometry.PhysicsColliders, 0,
+                new List<NavMeshBuildMarkup>(), sources);
+            var bounds = new Bounds(navMeshRoot.position + new Vector3(0f, 0f, 4f), new Vector3(40f, 14f, 44f));
+            NavMeshData data = NavMeshBuilder.BuildNavMeshData(settings, sources, bounds, Vector3.zero, Quaternion.identity);
+            if (data != null) _navMesh = NavMesh.AddNavMeshData(data);
+            else Debug.LogError("[CustomerDirector] NavMesh build failed.");
         }
 
         private void Update()

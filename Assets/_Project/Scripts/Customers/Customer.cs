@@ -102,7 +102,7 @@ namespace BarOwner.Customers
             {
                 _agent.enabled = true;
                 if (!_agent.Warp(transform.position))
-                    Debug.LogWarning("[Customer] Spawned off the NavMesh. Is the NavMeshSurface built?");
+                    Debug.LogWarning("[Customer] Spawned off the NavMesh. Did the CustomerDirector build it (navMeshRoot set)?");
             }
         }
 

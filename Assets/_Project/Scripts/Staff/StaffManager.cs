@@ -24,7 +24,7 @@ namespace BarOwner.Staff
         [SerializeField] private Transform arrivalPoint;
         [SerializeField, Tooltip("Where staff wait behind the bar when there's nothing to do.")] private Transform[] idleSpots;
         [SerializeField, Tooltip("Where staff drop collected glasses (near the glass rack).")] private Transform glassReturnPoint;
-        [SerializeField, Tooltip("Z of the walkway behind the bar where staff stand to serve.")] private float staffLaneZ = 3.75f;
+        [SerializeField, Tooltip("Z of the walkway behind the bar where staff stand to serve.")] private float staffLaneZ = 3.55f;
 
         private NetworkList<StaffData> _applicants;
         private NetworkList<StaffData> _hired;

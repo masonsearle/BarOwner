@@ -42,6 +42,14 @@ A day of service lasts about 12–15 real minutes and is tunable.
 | **Incidents** | Spills to mop, broken glass | Fights, drunk customers, bouncers, licence inspections |
 | **Progression** | Reputation stars unlock items | Expanding the building, licences (late hours, live music), second bar |
 
+## Level layout (greybox)
+- **Bar room** (public): front door from the street, tables, bar counter with taps, till, glass rack,
+  price chalkboard. A STAFF ONLY door behind the bar leads to the back.
+- **Back corridor**: brewery deliveries arrive inside the back door.
+- **Manager's office** (off the corridor): staff noticeboard + rota, brewery order board, desk, safe.
+- **Cellar** (down a ramp from the corridor; kegs can be rolled down): keg couplers feeding the taps,
+  spare kegs, empties cage.
+
 ## Co-op model
 - Host + up to 3 clients (Unity Netcode for GameObjects, client-hosted).
 - Shared bar, shared money, the host owns the save file. Any player can do any job.
